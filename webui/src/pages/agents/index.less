@@ -1,0 +1,37 @@
+.agents-page {
+  /* Make List.Item stretch to match tallest card in the row */
+  :global(.ant-list-grid) {
+    width: 100%;
+  }
+
+  :global(.ant-list-items) {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 24px;
+  }
+
+  :global(.ant-list-item) {
+    height: 100%;
+  }
+
+  .modern-agent-card {
+    height: 100%;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08) !important;
+      border-color: #000 !important;
+    }
+  }
+
+  /* Custom styles for pagination and other elements if needed */
+  :global(.ant-pagination) {
+    .ant-pagination-item-active {
+      border-color: #000;
+      a {
+        color: #000;
+      }
+    }
+  }
+}

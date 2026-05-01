@@ -1,0 +1,28 @@
+services:
+  agents-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: agents-app:latest
+    container_name: agents-app
+    restart: unless-stopped
+    ports:
+      - "8685:8685"
+    volumes:
+      # Spring Boot 外置配置（可编辑 application-prod.yml 覆盖默认值）
+      - ${AGENT_STUDIO_HOME:?AGENT_STUDIO_HOME is not set, run ./deploy.sh up first}/config:/app/config
+      # Claude Code 完整目录（settings.json、skills、agents 等）
+      - ${AGENT_STUDIO_HOME}/claude:/home/agents/.claude
+      # Claude Code workspace
+      - ${AGENT_STUDIO_HOME}/agent-workspace:/home/agents/agent-workspace
+      # SQLite 数据库文件
+      - ${AGENT_STUDIO_HOME}/data:/app/data
+      # 日志持久化
+      - ${AGENT_STUDIO_HOME}/logs:/app/logs
+    environment:
+      USER_HOME: /home/agents
+      SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/app/config/
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:sqlite:/app/data/agents.db
+      TZ: ${TZ:-UTC}
+      SERVER_TIMEZONE: ${TZ:-UTC}

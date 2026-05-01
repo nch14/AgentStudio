@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration status="WARN" monitorInterval="30">
+
+    <properties>
+        <property name="LOG_DIR">/app/logs</property>
+        <property name="PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</property>
+    </properties>
+
+    <!-- ==================== Appenders ==================== -->
+    <appenders>
+
+        <!-- Console -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${PATTERN}"/>
+        </Console>
+
+        <!-- 全局汇总日志 -->
+        <RollingFile name="AllLog" fileName="${LOG_DIR}/agents.log"
+                     filePattern="${LOG_DIR}/agents-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <!-- ERROR 汇总日志 -->
+        <RollingFile name="ErrorLog" fileName="${LOG_DIR}/agents-error.log"
+                     filePattern="${LOG_DIR}/agents-error-%d{yyyy-MM-dd}-%i.log">
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <!-- 业务模块日志 -->
+        <RollingFile name="AgentLog" fileName="${LOG_DIR}/agent/agent.log"
+                     filePattern="${LOG_DIR}/agent/agent-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="ConversationLog" fileName="${LOG_DIR}/conversation/conversation.log"
+                     filePattern="${LOG_DIR}/conversation/conversation-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="TaskLog" fileName="${LOG_DIR}/task/task.log"
+                     filePattern="${LOG_DIR}/task/task-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="ScheduleLog" fileName="${LOG_DIR}/schedule/schedule.log"
+                     filePattern="${LOG_DIR}/schedule/schedule-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="NotifyLog" fileName="${LOG_DIR}/notify/notify.log"
+                     filePattern="${LOG_DIR}/notify/notify-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="CoordinationLog" fileName="${LOG_DIR}/coordination/coordination.log"
+                     filePattern="${LOG_DIR}/coordination/coordination-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="WebLog" fileName="${LOG_DIR}/web/web.log"
+                     filePattern="${LOG_DIR}/web/web-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="ClaudeLog" fileName="${LOG_DIR}/claude/claude.log"
+                     filePattern="${LOG_DIR}/claude/claude-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="SpringAiLog" fileName="${LOG_DIR}/springai/springai.log"
+                     filePattern="${LOG_DIR}/springai/springai-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="OpenAiLog" fileName="${LOG_DIR}/openai/openai.log"
+                     filePattern="${LOG_DIR}/openai/openai-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+        <RollingFile name="InfraLog" fileName="${LOG_DIR}/infra/infra.log"
+                     filePattern="${LOG_DIR}/infra/infra-%d{yyyy-MM-dd}-%i.log">
+            <PatternLayout pattern="${PATTERN}"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+
+    </appenders>
+
+    <!-- ==================== Loggers ==================== -->
+    <loggers>
+
+        <!-- Spring 框架降噪 -->
+        <logger name="org.springframework" level="WARN"/>
+        <logger name="org.hibernate" level="WARN"/>
+        <logger name="org.apache" level="WARN"/>
+        <logger name="com.zaxxer" level="WARN"/>
+
+        <!-- 业务模块 Logger -->
+        <logger name="com.chenhaonee.agents.app.application.agent" level="DEBUG" additivity="false">
+            <appender-ref ref="AgentLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.application.conversation" level="DEBUG" additivity="false">
+            <appender-ref ref="ConversationLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.application.task" level="DEBUG" additivity="false">
+            <appender-ref ref="TaskLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.application.schedule" level="DEBUG" additivity="false">
+            <appender-ref ref="ScheduleLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.application.notify" level="DEBUG" additivity="false">
+            <appender-ref ref="NotifyLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.application.coordination" level="DEBUG" additivity="false">
+            <appender-ref ref="CoordinationLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.app.interfaces.http" level="DEBUG" additivity="false">
+            <appender-ref ref="WebLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.claudecode" level="DEBUG" additivity="false">
+            <appender-ref ref="ClaudeLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.springai" level="DEBUG" additivity="false">
+            <appender-ref ref="SpringAiLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.openai" level="DEBUG" additivity="false">
+            <appender-ref ref="OpenAiLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.connect" level="DEBUG" additivity="false">
+            <appender-ref ref="InfraLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.common" level="DEBUG" additivity="false">
+            <appender-ref ref="InfraLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <logger name="com.chenhaonee.agents.domain" level="DEBUG" additivity="false">
+            <appender-ref ref="InfraLog"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </logger>
+
+        <!-- Root Logger -->
+        <root level="INFO">
+            <appender-ref ref="Console"/>
+            <appender-ref ref="AllLog"/>
+            <appender-ref ref="ErrorLog"/>
+        </root>
+
+    </loggers>
+
+</configuration>

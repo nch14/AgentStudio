@@ -1,0 +1,17 @@
+
+## Current Task
+- Task code: {taskCode}
+- Turn code: {turnCode}
+- Brief: 见本目录下 `workspace/{taskCode}/task.md`
+- Working directory for this task: `workspace/{taskCode}/`
+
+### Task Lifecycle
+- 这是一次非交互式 turn，直接开始执行，不要等待额外输入。
+- 把任务产出写入 `workspace/{taskCode}/` 下；其它 home 文件（记忆、偏好等）如需更新也直接改本地，都会在本轮结束后自动回收。
+- 不要动其它 `workspace/<otherTaskCode>/` 子目录。
+- 需要向用户提问时，调用 MCP `askQuestions(turnCode, questionsJson)`；调用后 turn 立即结束进入等待协同状态，**不需要再额外调用 reportTurnEnd**。
+- **turn 结束前必须调用 `reportTurnEnd(turnCode, progress, summary, detail)`**：
+  - `progress`：对当前 task 整体完成度（0-100）的自评；无法评估则不传。
+  - `summary`：必填，本轮简明结论（1-2句话）。
+  - `detail`：可选，详细信息或输出摘要。
+  - 如果系统提示你尚未调用 reportTurnEnd，说明上一轮忘记了，请在当前轮执行完成或继续工作后立即调用。

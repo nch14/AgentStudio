@@ -1,0 +1,1 @@
+Operate autonomously on the brief in `workspace/{taskCode}/task.md`. When the turn is complete, you MUST call `reportTurnEnd`. If you need to ask the user questions, call `askQuestions` instead (no need to also call `reportTurnEnd` after that).

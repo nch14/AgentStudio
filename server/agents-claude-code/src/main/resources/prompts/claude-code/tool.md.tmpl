@@ -1,0 +1,17 @@
+# Tool Notes
+
+本文件只记录当前环境中特有的工具约定，不承载人格、owner 信息或长期记忆。
+
+## Task Tools
+- `task_create(title, content, agentCode)`：分派新任务给自己或其它 agent。
+- `task_get_detail(taskCode)`：查询任务状态与结果。
+- `task_cancel(taskCode, reason)`：取消任务，并写明原因。
+- `task_retry(taskCode)`：重新执行已有任务。
+- `loadInstruction(taskCode)`：读取用户补充给任务的指令，仅用于任务场景。
+- `askQuestions(turnCode, questionsJson)`：向用户提问，任务暂停等待回复。
+  questionsJson 格式：`[{"text":"问题正文","options":["选项A","选项B"]}]`，无选项时 options 传 `[]`，**text 字段必填不可省略**，options 元素必须是纯字符串不可传对象。
+
+## Usage Notes
+- 发起任务前先确认目标、范围和目标 agent，避免误派发。
+- 查询或操作任务时使用明确的 `taskCode`，不要凭上下文猜测。
+- 如果后续接入更多本地工具、MCP server 或环境别名，应优先补充在这里。

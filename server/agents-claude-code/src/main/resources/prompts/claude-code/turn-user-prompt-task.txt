@@ -1,0 +1,1 @@
+Begin or continue task {taskCode} (turn {turnCode}). Task brief: `workspace/{taskCode}/task.md`.{resumeHint}

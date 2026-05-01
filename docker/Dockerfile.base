@@ -1,0 +1,57 @@
+FROM eclipse-temurin:21-jre
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG PLAYWRIGHT_MCP_VERSION=0.0.70
+ARG CLAUDE_CODE_VERSION=2.1.109
+
+ENV TZ=UTC
+ENV APP_USER=agents
+ENV APP_GID=10001
+ENV APP_UID=10001
+ENV APP_HOME=/home/agents
+ENV APP_DIR=/app
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV PATH=/home/agents/.local/bin:${PATH}
+
+# 安装系统依赖、Node.js 22 LTS（通过 NodeSource）、创建非 root 运行用户、预创建目录
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs \
+        python3 python3-pip python3-venv \
+        dpkg-dev wget && \
+    groupadd --gid ${APP_GID} ${APP_USER} && \
+    useradd --uid ${APP_UID} --gid ${APP_GID} --create-home --home-dir ${APP_HOME} --shell /bin/bash --no-log-init ${APP_USER} && \
+    mkdir -p ${APP_DIR}/config \
+             ${APP_DIR}/logs \
+             ${APP_HOME}/agent-workspace \
+             ${APP_HOME}/.claude \
+             ${APP_HOME}/.claude/skills \
+             ${APP_HOME}/.claude/agents \
+             ${PLAYWRIGHT_BROWSERS_PATH} && \
+    chown -R ${APP_USER}:${APP_USER} ${APP_DIR} ${APP_HOME} ${PLAYWRIGHT_BROWSERS_PATH} && \
+    rm -rf /var/lib/apt/lists/*
+
+# 全局安装 @playwright/mcp + Chrome（以 root 运行确保 --with-deps 生效）
+RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} && \
+    npx playwright install --with-deps chrome && \
+    chown -R ${APP_USER}:${APP_USER} ${PLAYWRIGHT_BROWSERS_PATH} && \
+    rm -rf /root/.npm /var/lib/apt/lists/*
+
+# 使用专用用户安装 Claude Code CLI，避免运行时依赖 root home
+WORKDIR /tmp
+USER ${APP_USER}
+RUN export HOME=${APP_HOME} && \
+    curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}" && \
+    ${APP_HOME}/.local/bin/claude --version
+
+USER root
+RUN ln -sf ${APP_HOME}/.local/bin/claude /usr/local/bin/claude && \
+    ln -sf /usr/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip
+
+ENV HOME=${APP_HOME}
+WORKDIR ${APP_DIR}
+USER ${APP_USER}
