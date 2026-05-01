@@ -27,6 +27,9 @@ AgentStudio 是一个面向个人使用的 AI Agent 平台，用来集中管理�
 ```bash
 cd deploy
 chmod +x deploy.sh
+./deploy.sh init                                    # 在 ~/.agent-studio/ 下生成默认配置
+# 编辑 ~/.agent-studio/config/application-prod.yml，
+# 把 agents.auth.initial-token 替换为足够强的随机值（参考 openssl rand -hex 32）
 ./deploy.sh build
 ./deploy.sh up
 ```
@@ -70,6 +73,9 @@ This release includes a Spring Boot backend, a Umi/React frontend, and a Claude 
 ```bash
 cd deploy
 chmod +x deploy.sh
+./deploy.sh init                                    # creates default config under ~/.agent-studio/
+# Edit ~/.agent-studio/config/application-prod.yml and replace
+# agents.auth.initial-token with a strong random value (see: openssl rand -hex 32)
 ./deploy.sh build
 ./deploy.sh up
 ```
