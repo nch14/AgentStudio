@@ -1,6 +1,7 @@
 package com.chenhaonee.agents.app.infrastructure.security;
 
 import com.chenhaonee.agents.domain.auth.service.ApiTokenDomainService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -12,10 +13,15 @@ import org.springframework.security.config.annotation.web.configurers.FormLoginC
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+
+    private static final RequestMatcher LOCAL_MCP_REQUEST = request -> isMcpEndpoint(request)
+            && isLocalRequest(request)
+            && isLoopbackHost(request);
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, ApiTokenDomainService apiTokenDomainService) throws Exception {
@@ -26,6 +32,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/auth/init").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/validate").permitAll()
+                        .requestMatchers(LOCAL_MCP_REQUEST).permitAll()
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -49,5 +56,32 @@ public class SecurityConfig {
                         })
                 );
         return http.build();
+    }
+
+    private static boolean isMcpEndpoint(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        String contextPath = request.getContextPath();
+        if (contextPath != null && !contextPath.isBlank() && path.startsWith(contextPath)) {
+            path = path.substring(contextPath.length());
+        }
+        return "/sse".equals(path)
+                || "/mcp".equals(path)
+                || path.startsWith("/mcp/");
+    }
+
+    private static boolean isLocalRequest(HttpServletRequest request) {
+        String remoteAddr = request.getRemoteAddr();
+        return "127.0.0.1".equals(remoteAddr)
+                || "0:0:0:0:0:0:0:1".equals(remoteAddr)
+                || "::1".equals(remoteAddr)
+                || "localhost".equalsIgnoreCase(remoteAddr);
+    }
+
+    private static boolean isLoopbackHost(HttpServletRequest request) {
+        String serverName = request.getServerName();
+        return "127.0.0.1".equals(serverName)
+                || "0:0:0:0:0:0:0:1".equals(serverName)
+                || "::1".equals(serverName)
+                || "localhost".equalsIgnoreCase(serverName);
     }
 }

@@ -2,6 +2,8 @@ package com.chenhaonee.agents.app.application.task;
 
 import com.chenhaonee.agents.domain.notify.service.MessageCenter;
 import com.chenhaonee.agents.domain.task.model.Task;
+import com.chenhaonee.agents.domain.task.model.TaskTurn;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +14,9 @@ import org.springframework.stereotype.Service;
 public class TaskNotificationService {
 
     private final MessageCenter messageCenter;
+
+    @Value("${app.notify.config-code.turn-waiting:questions_raised}")
+    private String turnWaitingConfigCode;
 
     @Value("${app.notify.config-code.turn-hanging:turn_hanging}")
     private String turnHangingConfigCode;
@@ -24,9 +29,19 @@ public class TaskNotificationService {
     }
 
     public void notifyTaskWaiting(Task task) {
+        messageCenter.send(turnWaitingConfigCode,
+                "任务等待输入: " + task.getTitle(),
+                "Task " + task.getCode() + " 正等待用户输入或协同处理");
+    }
+
+    public void notifyTaskHanging(Task task, TaskTurn turn) {
+        String reason = Optional.ofNullable(turn.getFinalSummary())
+                .filter(summary -> !summary.isBlank())
+                .orElse("未知原因");
         messageCenter.send(turnHangingConfigCode,
-                "任务等待处理: " + task.getTitle(),
-                "Task " + task.getCode() + " 正等待 Boss 处理协同事项");
+                "任务执行异常: " + task.getTitle(),
+                "Task " + task.getCode() + " 的 Turn " + turn.getCode()
+                        + " 进入 HANGING 状态，请检查执行链路。原因：" + reason);
     }
 
     public void notifyTaskSucceeded(Task task, String resultSummary) {

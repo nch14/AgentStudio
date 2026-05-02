@@ -27,6 +27,17 @@ public class McpConfigGenerator {
         return mcpFile;
     }
 
+    /**
+     * 仅在 mcp-config.json 缺失时生成，避免覆盖用户手动维护的 MCP 配置。
+     */
+    public Path generateIfAbsent(Path workDir, String mcpServerUrl) throws IOException {
+        Path mcpFile = workDir.resolve("mcp-config.json");
+        if (Files.exists(mcpFile)) {
+            return mcpFile;
+        }
+        return generate(workDir, mcpServerUrl);
+    }
+
     private Map<String, Object> buildMcpConfig(String mcpServerUrl) {
         Map<String, Object> server = new HashMap<>();
         server.put("type", "sse");

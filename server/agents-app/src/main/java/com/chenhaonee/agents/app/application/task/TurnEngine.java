@@ -45,6 +45,7 @@ public class TurnEngine {
             log.error("Failed to load agent for turn {}", turn.getCode(), e);
             turn.fail("Agent Error", e.getMessage());
             taskTurnDomainService.save(turn);
+            taskNotificationService.notifyTaskHanging(task, turn);
             return;
         }
 
@@ -53,7 +54,7 @@ public class TurnEngine {
             log.warn("Agent {} is busy, another task turn is running. Hanging turn {}.", agent.getCode(), turn.getCode());
             turn.hang("Agent Busy", "Another task turn is already running for this agent.");
             taskTurnDomainService.save(turn);
-            taskNotificationService.notifyTaskWaiting(task);
+            taskNotificationService.notifyTaskHanging(task, turn);
             return;
         }
 
@@ -65,18 +66,17 @@ public class TurnEngine {
     }
 
     private void executeRun(Agent agent, Task task, TaskTurn turn) {
-        TaskAgent taskAgent = agentRegistry.findTaskAgent(agent.getProvider())
-                .orElseThrow(() -> new IllegalStateException("Task agent not found for provider: " + agent.getProvider()));
-
-        TaskTurnRequest request = new TaskTurnRequest(task.getCode(), turn.getCode());
-
         try {
+            TaskAgent taskAgent = agentRegistry.findTaskAgent(agent.getProvider())
+                    .orElseThrow(() -> new IllegalStateException("Task agent not found for provider: " + agent.getProvider()));
+            TaskTurnRequest request = new TaskTurnRequest(task.getCode(), turn.getCode());
             TaskTurnResult result = taskAgent.runTurn(agent.getCode(), request);
             processResult(turn, task, result);
         } catch (Exception e) {
             log.error("Failed to run turn {}", turn.getCode(), e);
             turn.fail("Engine Error", e.getMessage());
             taskTurnDomainService.save(turn);
+            taskNotificationService.notifyTaskHanging(task, turn);
         }
     }
 
@@ -103,8 +103,10 @@ public class TurnEngine {
             }
         }
 
-        if (turn.getRunStatus() == TurnRunStatus.HANGING) {
+        if (turn.getRunStatus() == TurnRunStatus.SUSPENDED) {
             taskNotificationService.notifyTaskWaiting(task);
+        } else if (turn.getRunStatus() == TurnRunStatus.HANGING) {
+            taskNotificationService.notifyTaskHanging(task, turn);
         }
     }
 }

@@ -70,7 +70,84 @@ class TurnEngineTest {
         assertEquals(40, turn.getProgress());
         assertEquals(TurnRunStatus.HANGING, turn.getRunStatus());
         verify(taskDomainService, never()).updateProgress(any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(taskNotificationService).notifyTaskHanging(task, turn);
+        verify(taskNotificationService, never()).notifyTaskWaiting(task);
+    }
+
+    @Test
+    void shouldSuspendTurnAndNotifyWaitingWhenAgentNeedsCoordination() {
+        TurnEngine engine = newEngine();
+        Task task = taskWithProgress("task-1", "agent-1", 40);
+        TaskTurn turn = runningTurnAt("task-1", 40);
+
+        when(agentDomainService.requireEnabledAgent("agent-1")).thenReturn(enabledAgent("agent-1"));
+        when(agentRegistry.findTaskAgent(AgentProvider.CLAUDE_CODE)).thenReturn(Optional.of(taskAgent));
+        when(taskAgent.runTurn(any(), any(TaskTurnRequest.class)))
+                .thenReturn(TaskTurnResult.waitCoordination());
+
+        engine.runTurn(task, turn);
+
+        assertEquals(40, turn.getProgress());
+        assertEquals(TurnRunStatus.SUSPENDED, turn.getRunStatus());
+        verify(taskDomainService, never()).updateProgress(any(), org.mockito.ArgumentMatchers.anyInt());
         verify(taskNotificationService).notifyTaskWaiting(task);
+        verify(taskNotificationService, never()).notifyTaskHanging(task, turn);
+    }
+
+    @Test
+    void shouldNotifyHangingWhenAgentCannotBeLoaded() {
+        TurnEngine engine = newEngine();
+        Task task = taskWithProgress("task-1", "agent-1", 40);
+        TaskTurn turn = runningTurnAt("task-1", 40);
+
+        when(agentDomainService.requireEnabledAgent("agent-1"))
+                .thenThrow(new IllegalStateException("agent disabled"));
+
+        engine.runTurn(task, turn);
+
+        assertEquals(TurnRunStatus.HANGING, turn.getRunStatus());
+        assertEquals("Agent Error", turn.getFinalSummary());
+        verify(taskTurnDomainService).save(turn);
+        verify(taskNotificationService).notifyTaskHanging(task, turn);
+        verify(taskNotificationService, never()).notifyTaskWaiting(task);
+    }
+
+    @Test
+    void shouldNotifyHangingWhenTaskAgentIsMissing() {
+        TurnEngine engine = newEngine();
+        Task task = taskWithProgress("task-1", "agent-1", 40);
+        TaskTurn turn = runningTurnAt("task-1", 40);
+
+        when(agentDomainService.requireEnabledAgent("agent-1")).thenReturn(enabledAgent("agent-1"));
+        when(agentRegistry.findTaskAgent(AgentProvider.CLAUDE_CODE)).thenReturn(Optional.empty());
+
+        engine.runTurn(task, turn);
+
+        assertEquals(TurnRunStatus.HANGING, turn.getRunStatus());
+        assertEquals("Engine Error", turn.getFinalSummary());
+        verify(taskTurnDomainService).save(turn);
+        verify(taskNotificationService).notifyTaskHanging(task, turn);
+        verify(taskNotificationService, never()).notifyTaskWaiting(task);
+    }
+
+    @Test
+    void shouldNotifyHangingWhenAgentExecutionThrows() {
+        TurnEngine engine = newEngine();
+        Task task = taskWithProgress("task-1", "agent-1", 40);
+        TaskTurn turn = runningTurnAt("task-1", 40);
+
+        when(agentDomainService.requireEnabledAgent("agent-1")).thenReturn(enabledAgent("agent-1"));
+        when(agentRegistry.findTaskAgent(AgentProvider.CLAUDE_CODE)).thenReturn(Optional.of(taskAgent));
+        when(taskAgent.runTurn(any(), any(TaskTurnRequest.class)))
+                .thenThrow(new IllegalStateException("run failed"));
+
+        engine.runTurn(task, turn);
+
+        assertEquals(TurnRunStatus.HANGING, turn.getRunStatus());
+        assertEquals("Engine Error", turn.getFinalSummary());
+        verify(taskTurnDomainService).save(turn);
+        verify(taskNotificationService).notifyTaskHanging(task, turn);
+        verify(taskNotificationService, never()).notifyTaskWaiting(task);
     }
 
     @Test

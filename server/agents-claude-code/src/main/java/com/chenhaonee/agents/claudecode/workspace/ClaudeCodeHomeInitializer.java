@@ -50,11 +50,8 @@ public class ClaudeCodeHomeInitializer implements AgentHomeInitializer {
         initializeMarkdownFile(agentHome.resolve(MEMORY_DIR).resolve(MEMORY_OVERVIEW_FILE),
                 claudeCodePrompts.renderMemoryOverviewMd(), "memory/overview.md", agentCode);
 
-        Path mcpFile = agentHome.resolve("mcp-config.json");
-        if (!Files.exists(mcpFile)) {
-            mcpConfigGenerator.generate(agentHome, properties.getMcpServerUrl());
-            log.info("Created mcp-config.json for agent: {}", agentCode);
-        }
+        Path mcpFile = mcpConfigGenerator.generateIfAbsent(agentHome, properties.getMcpServerUrl());
+        log.info("Ensured mcp-config.json for agent {}: {}", agentCode, mcpFile);
     }
 
     private void initializeMarkdownFile(Path file, String content, String fileName, String agentCode) throws IOException {

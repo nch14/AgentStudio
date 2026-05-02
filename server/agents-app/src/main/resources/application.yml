@@ -74,6 +74,7 @@ app:
       fixed-rate: 60000
     config-code:
       questions-raised: questions_raised
+      turn-waiting: questions_raised
       turn-hanging: turn_hanging
       task-succeeded: task_succeeded
 
