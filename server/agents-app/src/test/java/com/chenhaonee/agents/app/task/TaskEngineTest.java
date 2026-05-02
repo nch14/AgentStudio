@@ -51,7 +51,7 @@ class TaskEngineTest {
     }
 
     @Test
-    void shouldCancelTimedOutHangingTurnBeforeCreatingNextTurn() {
+    void shouldKeepTimedOutHangingTurnWaitingWithoutCreatingNextTurn() {
         TaskEngine taskEngine = new TaskEngine(taskDomainService, taskTurnDomainService, taskTurnCoordinator, agentDomainService, agentRegistry, taskNotificationService);
         ReflectionTestUtils.setField(taskEngine, "hangingTimeoutSeconds", 1800L);
 
@@ -61,9 +61,9 @@ class TaskEngineTest {
 
         taskEngine.processPattern(task);
 
-        verify(taskTurnDomainService).save(latestTurn);
-        verify(taskTurnCoordinator).startNextTurn(task.getCode(), task.getProgress());
-        assertEquals(TurnRunStatus.CANCELLED, latestTurn.getRunStatus());
+        verify(taskTurnDomainService, never()).save(latestTurn);
+        verify(taskTurnCoordinator, never()).startNextTurn(task.getCode(), task.getProgress());
+        assertEquals(TurnRunStatus.HANGING, latestTurn.getRunStatus());
         assertFalse(latestTurn.isFinished());
     }
 

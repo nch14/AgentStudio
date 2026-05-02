@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
+import com.chenhaonee.agents.claudecode.mcp.McpConfigGenerator;
 import com.chenhaonee.agents.claudecode.prompt.ClaudeCodePrompts;
 import com.chenhaonee.agents.common.config.AgentWorkspaceProperties;
 import com.chenhaonee.agents.connect.capability.AgentConfigApi;
@@ -34,6 +35,7 @@ class WorkspaceManagerTest {
     private TaskRepository taskRepository;
     private AgentConfigApi agentConfigApi;
     private ClaudeCodePrompts claudeCodePrompts;
+    private McpConfigGenerator mcpConfigGenerator;
 
     @BeforeEach
     void setUp() {
@@ -52,6 +54,7 @@ class WorkspaceManagerTest {
         when(agentConfigApi.getOwnerContext()).thenReturn(owner);
 
         claudeCodePrompts = new ClaudeCodePrompts(agentConfigApi);
+        mcpConfigGenerator = new McpConfigGenerator();
     }
 
     /**
@@ -65,7 +68,7 @@ class WorkspaceManagerTest {
                 "task-waiting", taskWithStatus(TaskStatus.RUNNING)));
 
         WorkspaceManager workspaceManager = new WorkspaceManager(
-                properties, workspaceProperties, repo, claudeCodePrompts);
+                properties, workspaceProperties, repo, claudeCodePrompts, mcpConfigGenerator);
 
         assertTrue(workspaceManager.canCleanupTaskWorkspace(Path.of("/data/agents/agent-01/workspace/task-success")));
         assertTrue(workspaceManager.canCleanupTaskWorkspace(Path.of("/data/agents/agent-01/workspace/task-cancelled")));
@@ -80,21 +83,21 @@ class WorkspaceManagerTest {
     void shouldReturnFalseForNullTaskCodePath() {
         WorkspaceManager workspaceManager = new WorkspaceManager(
                 properties, workspaceProperties, stubTaskRepository(Map.of()),
-                claudeCodePrompts);
+                claudeCodePrompts, mcpConfigGenerator);
 
         // Path.of("") 的 getFileName() 返回 null，应被安全处理
         assertFalse(workspaceManager.canCleanupTaskWorkspace(Path.of("")));
     }
 
     /**
-     * prepareHome 应当只创建目录和 CLAUDE.md，不写 mcp-config.json。
+     * prepareHome 应当创建目录、CLAUDE.md 和 mcp-config.json。
      */
     @Test
     void prepareHomeShouldCreateDirectoriesAndClaudeMd() throws Exception {
         String agentCode = "agent-01";
 
         WorkspaceManager workspaceManager = new WorkspaceManager(
-                properties, workspaceProperties, taskRepository, claudeCodePrompts);
+                properties, workspaceProperties, taskRepository, claudeCodePrompts, mcpConfigGenerator);
 
         workspaceManager.prepareHome(agentCode);
 
@@ -102,6 +105,7 @@ class WorkspaceManagerTest {
         assertTrue(Files.exists(agentHome));
         assertTrue(Files.isDirectory(agentHome));
         assertTrue(Files.exists(agentHome.resolve("CLAUDE.md")));
+        assertTrue(Files.exists(agentHome.resolve("mcp-config.json")));
     }
 
     /**
@@ -115,12 +119,33 @@ class WorkspaceManagerTest {
         Files.writeString(agentHome.resolve("CLAUDE.md"), "existing content");
 
         WorkspaceManager workspaceManager = new WorkspaceManager(
-                properties, workspaceProperties, taskRepository, claudeCodePrompts);
+                properties, workspaceProperties, taskRepository, claudeCodePrompts, mcpConfigGenerator);
 
         workspaceManager.prepareHome(agentCode);
 
         // 已存在的 CLAUDE.md 不应被覆盖（ensureClaudeMd 的条件写逻辑）
         assertEquals("existing content", Files.readString(agentHome.resolve("CLAUDE.md")));
+    }
+
+    /**
+     * prepareHome 不应覆盖已存在的 mcp-config.json，避免丢失用户自定义 MCP 配置。
+     */
+    @Test
+    void prepareHomeShouldPreserveExistingMcpConfig() throws Exception {
+        String agentCode = "agent-01";
+        Path agentHome = tempDir.resolve(agentCode);
+        Files.createDirectories(agentHome);
+        String customConfig = "{\"mcpServers\":{\"user-tool\":{\"type\":\"stdio\"}}}";
+        Files.writeString(agentHome.resolve("mcp-config.json"), customConfig);
+        properties.setMcpServerUrl("http://localhost:8685/sse");
+
+        WorkspaceManager workspaceManager = new WorkspaceManager(
+                properties, workspaceProperties, taskRepository, claudeCodePrompts, mcpConfigGenerator);
+
+        workspaceManager.prepareHome(agentCode);
+
+        String config = Files.readString(agentHome.resolve("mcp-config.json"));
+        assertEquals(customConfig, config);
     }
 
     /**
@@ -132,7 +157,7 @@ class WorkspaceManagerTest {
         String taskCode = "task-001";
 
         WorkspaceManager workspaceManager = new WorkspaceManager(
-                properties, workspaceProperties, taskRepository, claudeCodePrompts);
+                properties, workspaceProperties, taskRepository, claudeCodePrompts, mcpConfigGenerator);
 
         workspaceManager.prepareHome(agentCode);
         workspaceManager.ensureTaskWorkspace(agentCode, taskCode);
@@ -154,7 +179,7 @@ class WorkspaceManagerTest {
                 "task-001", taskWithStatus(TaskStatus.RUNNING)));
 
         WorkspaceManager workspaceManager = new WorkspaceManager(
-                properties, workspaceProperties, taskRepository, claudeCodePrompts);
+                properties, workspaceProperties, taskRepository, claudeCodePrompts, mcpConfigGenerator);
 
         workspaceManager.prepareHome(agentCode);
         workspaceManager.writeTaskMd(agentCode, taskCode);

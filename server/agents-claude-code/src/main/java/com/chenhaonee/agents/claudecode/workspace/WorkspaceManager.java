@@ -1,6 +1,7 @@
 package com.chenhaonee.agents.claudecode.workspace;
 
 import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
+import com.chenhaonee.agents.claudecode.mcp.McpConfigGenerator;
 import com.chenhaonee.agents.claudecode.prompt.ClaudeCodePrompts;
 import com.chenhaonee.agents.common.config.AgentWorkspaceProperties;
 import com.chenhaonee.agents.domain.task.model.Task;
@@ -50,6 +51,7 @@ public class WorkspaceManager {
     private final AgentWorkspaceProperties workspaceProperties;
     private final TaskRepository taskRepository;
     private final ClaudeCodePrompts claudeCodePrompts;
+    private final McpConfigGenerator mcpConfigGenerator;
 
     /**
      * 启动时：仅确保 workspace root 存在。
@@ -71,13 +73,14 @@ public class WorkspaceManager {
     }
 
     /**
-     * Bootstrap：确保本地 agent home 目录和 CLAUDE.md 存在。
+     * Bootstrap：确保本地 agent home 目录、CLAUDE.md 与 mcp-config.json 存在。
      * 本地文件系统即真相，不再从 OSS 下载。
      */
     public void prepareHome(String agentCode) throws IOException {
         Path agentHome = getAgentHome(agentCode);
         Files.createDirectories(agentHome);
         ensureClaudeMd(agentCode);
+        ensureMcpConfig(agentHome);
     }
 
     /**
@@ -200,6 +203,10 @@ public class WorkspaceManager {
 
     private void writeClaudeMdContent(Path claudeMd, String content) throws IOException {
         Files.writeString(claudeMd, content);
+    }
+
+    private void ensureMcpConfig(Path agentHome) throws IOException {
+        mcpConfigGenerator.generateIfAbsent(agentHome, properties.getMcpServerUrl());
     }
 
     /**

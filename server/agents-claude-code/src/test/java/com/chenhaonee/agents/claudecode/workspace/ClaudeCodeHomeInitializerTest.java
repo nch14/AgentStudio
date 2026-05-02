@@ -85,10 +85,12 @@ class ClaudeCodeHomeInitializerTest {
         String customSoulContent = "my custom soul content";
         String customOwnerContent = "my custom owner content";
         String customToolContent = "my custom tool content";
+        String customMcpConfig = "{\"mcpServers\":{\"user-tool\":{\"type\":\"stdio\"}}}";
         Files.writeString(agentHome.resolve("CLAUDE.md"), customClaudeContent);
         Files.writeString(agentHome.resolve("soul.md"), customSoulContent);
         Files.writeString(agentHome.resolve("owner.md"), customOwnerContent);
         Files.writeString(agentHome.resolve("tool.md"), customToolContent);
+        Files.writeString(agentHome.resolve("mcp-config.json"), customMcpConfig);
 
         initializer.initHome("test-agent", agentHome);
 
@@ -96,6 +98,7 @@ class ClaudeCodeHomeInitializerTest {
         assertEquals(customSoulContent, Files.readString(agentHome.resolve("soul.md")));
         assertEquals(customOwnerContent, Files.readString(agentHome.resolve("owner.md")));
         assertEquals(customToolContent, Files.readString(agentHome.resolve("tool.md")));
+        assertEquals(customMcpConfig, Files.readString(agentHome.resolve("mcp-config.json")));
         assertTrue(Files.exists(agentHome.resolve("memory").resolve("overview.md")));
         assertTrue(Files.isDirectory(agentHome.resolve("memory").resolve("daily")));
         assertTrue(Files.isDirectory(agentHome.resolve("memory").resolve("topics")));

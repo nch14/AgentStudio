@@ -68,10 +68,8 @@ public class TaskEngine {
             return;
         }
 
-        latestTurn.timeoutCancel("HANGING turn timeout",
-                "Turn remained HANGING beyond timeout, cancelled by scheduler before starting next turn.");
-        taskTurnDomainService.save(latestTurn);
-        startNextTurn(task);
+        log.warn("Task {} latest turn {} is HANGING and timed out, keep waiting for manual resume",
+                task.getCode(), latestTurn.getCode());
     }
 
     private boolean isHangingTimedOut(TaskTurn turn) {

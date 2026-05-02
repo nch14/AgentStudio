@@ -1,5 +1,6 @@
 package com.chenhaonee.agents.app.infrastructure.security;
 
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -17,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 @SpringBootTest(classes = AgentsApplication.class, properties = {
         "agents.auth.allow-http-init=true",
@@ -106,5 +108,41 @@ class SecurityIntegrationTest {
                         .content(objectMapper.writeValueAsString(new AuthController.InitTokenRequest(token))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    void shouldAllowLocalMcpEndpointWithoutToken() throws Exception {
+        mockMvc.perform(get("/sse").with(remoteAddr("127.0.0.1")))
+                .andExpect(result -> assertNotEquals(401, result.getResponse().getStatus()));
+    }
+
+    @Test
+    void shouldRejectRemoteMcpEndpointWithoutToken() throws Exception {
+        mockMvc.perform(get("/sse").with(remoteAddr("203.0.113.10")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401));
+    }
+
+    @Test
+    void shouldRejectMcpEndpointWhenHostIsNotLoopback() throws Exception {
+        mockMvc.perform(get("/sse")
+                        .with(remoteAddr("127.0.0.1"))
+                        .with(serverName("agents.example.com")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401));
+    }
+
+    private static RequestPostProcessor remoteAddr(String remoteAddr) {
+        return request -> {
+            request.setRemoteAddr(remoteAddr);
+            return request;
+        };
+    }
+
+    private static RequestPostProcessor serverName(String serverName) {
+        return request -> {
+            request.setServerName(serverName);
+            return request;
+        };
     }
 }
