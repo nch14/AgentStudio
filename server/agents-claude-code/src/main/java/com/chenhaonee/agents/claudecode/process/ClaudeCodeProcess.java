@@ -1,6 +1,7 @@
 package com.chenhaonee.agents.claudecode.process;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonEvent;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonParser;
 import org.slf4j.Logger;
@@ -180,6 +181,47 @@ public class ClaudeCodeProcess {
             ActiveTurn activeTurn = activeTurnRef.get();
             return activeTurn == null ? Flux.empty() : activeTurn.sink().asFlux();
         });
+    }
+
+    /**
+     * 向 stdin 写入 stream-json control_request 消息，请求 CLI 中断当前 turn。
+     *
+     * <p>CLI 收到后自行 abort 当前工具调用与模型思考，最终发出 {@code result}
+     * 事件让 turn 自然结束。进程保持存活，session 状态保留，下一轮可继续使用
+     * 同一进程，无需 {@code --resume}。</p>
+     *
+     * @return true 表示成功写入；false 表示进程未启动或无活跃 turn 或 IO 失败
+     */
+    public boolean interruptActiveTurn() {
+        synchronized (turnLock) {
+            if (!started || stdinWriter == null) {
+                return false;
+            }
+            if (process == null || !process.isAlive()) {
+                return false;
+            }
+            if (activeTurnRef.get() == null) {
+                return false;
+            }
+            String requestId = "req_interrupt_" + System.nanoTime();
+            JSONObject request = new JSONObject();
+            request.put("subtype", "interrupt");
+            JSONObject controlRequest = new JSONObject();
+            controlRequest.put("type", "control_request");
+            controlRequest.put("request_id", requestId);
+            controlRequest.put("request", request);
+            String line = JSON.toJSONString(controlRequest);
+            try {
+                stdinWriter.write(line);
+                stdinWriter.write("\n");
+                stdinWriter.flush();
+                log.info("Sent interrupt control_request: requestId={}", requestId);
+                return true;
+            } catch (IOException e) {
+                log.warn("Failed to write interrupt to stdin", e);
+                return false;
+            }
+        }
     }
 
     /**

@@ -6,14 +6,15 @@ import com.chenhaonee.agents.app.application.agent.ProviderCapabilityService;
 import com.chenhaonee.agents.connect.driver.AgentRegistry;
 import com.chenhaonee.agents.connect.spi.core.MessagesAgent;
 import com.chenhaonee.agents.connect.spi.model.MessagesEvent;
+import com.chenhaonee.agents.connect.support.MessagesEventBlockRecorderFactory;
 import com.chenhaonee.agents.domain.agent.model.Agent;
 import com.chenhaonee.agents.domain.agent.model.AgentProvider;
 import com.chenhaonee.agents.domain.agent.service.AgentDomainService;
 import com.chenhaonee.agents.domain.session.factory.AgentSessionDomainFactory;
-import com.chenhaonee.agents.domain.session.model.AgentMessage;
 import com.chenhaonee.agents.domain.session.model.AgentSession;
+import com.chenhaonee.agents.domain.session.model.ContentBlockType;
+import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
 import com.chenhaonee.agents.domain.session.model.MessageRole;
-import com.chenhaonee.agents.domain.session.model.MessageStatus;
 import com.chenhaonee.agents.domain.session.repository.AgentSessionRepository;
 import com.chenhaonee.agents.domain.session.service.AgentSessionDomainService;
 import java.util.List;
@@ -59,6 +60,15 @@ class AnthropicMessagesServiceTest {
     private ProviderCapabilityService providerCapabilityService;
 
     @Mock
+    private MessagesEventBlockRecorderFactory messagesEventBlockRecorderFactory;
+
+    @Mock
+    private MessagesEventBlockRecorderFactory.MessagesEventBlockRecorder recorder;
+
+    @Mock
+    private ActiveStreamRegistry activeStreamRegistry;
+
+    @Mock
     private MessagesAgent messagesAgent;
 
     @InjectMocks
@@ -68,7 +78,6 @@ class AnthropicMessagesServiceTest {
     void shouldReturnFinalMessageJsonForNonStreamingRequest() {
         Agent agent = enabledAgent("agent-a", AgentProvider.CLAUDE_CODE);
         AgentSession session = session("session-1", "agent-a");
-        AgentMessage assistantPlaceholder = assistantMessage("assistant-1", "session-1");
         String requestJson = """
                 {
                   "model": "claude-sonnet",
@@ -78,10 +87,7 @@ class AnthropicMessagesServiceTest {
                     {
                       "role": "user",
                       "content": [
-                        {
-                          "type": "text",
-                          "text": "hello"
-                        }
+                        {"type": "text", "text": "hello"}
                       ]
                     }
                   ]
@@ -106,31 +112,26 @@ class AnthropicMessagesServiceTest {
                         {
                           "type": "content_block_start",
                           "index": 0,
-                          "content_block": {
-                            "type": "text",
-                            "text": ""
-                          }
+                          "content_block": {"type": "text", "text": ""}
                         }
                         """),
                 new MessagesEvent("content_block_delta", """
                         {
                           "type": "content_block_delta",
                           "index": 0,
-                          "delta": {
-                            "type": "text_delta",
-                            "text": "hello"
-                          }
+                          "delta": {"type": "text_delta", "text": "hello"}
                         }
+                        """),
+                new MessagesEvent("content_block_stop", """
+                        {"type": "content_block_stop", "index": 0}
                         """),
                 new MessagesEvent("message_delta", """
                         {
                           "type": "message_delta",
-                          "delta": {
-                            "stop_reason": "end_turn",
-                            "stop_sequence": null
-                          }
+                          "delta": {"stop_reason": "end_turn", "stop_sequence": null}
                         }
-                        """)
+                        """),
+                new MessagesEvent("message_stop", "{\"type\":\"message_stop\"}")
         );
 
         when(agentDomainService.requireEnabledAgent("agent-a")).thenReturn(agent);
@@ -138,13 +139,11 @@ class AnthropicMessagesServiceTest {
         when(agentSessionRepository.findByCodeAndAgentCode("session-1", "agent-a")).thenReturn(Optional.of(session));
         when(agentRegistry.findMessagesAgent(AgentProvider.CLAUDE_CODE)).thenReturn(Optional.of(messagesAgent));
         when(messagesAgent.stream("agent-a", requestJson, "session-1")).thenReturn(result);
-        when(agentSessionDomainService.appendMessage(eq("session-1"), any(AgentMessage.class))).thenReturn(session);
-        when(agentSessionDomainService.appendMessageAndReturnMessage(eq("session-1"), any(AgentMessage.class)))
-                .thenReturn(assistantPlaceholder);
-        when(agentSessionDomainService.completeMessage(eq("assistant-1"), any(String.class), eq("msg_1")))
-                .thenReturn(assistantPlaceholder);
+        when(messagesEventBlockRecorderFactory.create(eq("session-1"), any(), eq(MessageProtocolType.ANTHROPIC_MESSAGES)))
+                .thenReturn(recorder);
 
-        AnthropicMessagesService.AnthropicMessagesResult response = anthropicMessagesService.create("agent-a", "session-1", requestJson);
+        AnthropicMessagesService.AnthropicMessagesResult response =
+                anthropicMessagesService.create("agent-a", "session-1", requestJson);
 
         assertEquals("session-1", response.sessionCode());
         assertNull(response.events());
@@ -156,32 +155,24 @@ class AnthropicMessagesServiceTest {
         assertEquals("end_turn", finalMessage.getString("stop_reason"));
         assertEquals("hello", finalMessage.getJSONArray("content").getJSONObject(0).getString("text"));
 
-        ArgumentCaptor<AgentMessage> userMessageCaptor = ArgumentCaptor.forClass(AgentMessage.class);
-        verify(agentSessionDomainService).appendMessage(eq("session-1"), userMessageCaptor.capture());
-        assertEquals(MessageRole.USER, userMessageCaptor.getValue().getRole());
-
-        ArgumentCaptor<String> assistantPayloadCaptor = ArgumentCaptor.forClass(String.class);
-        verify(agentSessionDomainService).completeMessage(eq("assistant-1"), assistantPayloadCaptor.capture(), eq("msg_1"));
-        JSONObject persistedPayload = JSON.parseObject(assistantPayloadCaptor.getValue());
-        assertEquals("hello", persistedPayload.getJSONArray("content").getJSONObject(0).getString("text"));
+        ArgumentCaptor<String> userPayload = ArgumentCaptor.forClass(String.class);
+        verify(agentSessionDomainService).appendBlock(
+                eq("session-1"), any(), eq(MessageRole.USER), eq(ContentBlockType.TEXT),
+                eq(MessageProtocolType.ANTHROPIC_MESSAGES), userPayload.capture(), eq((String) null)
+        );
+        assertEquals("hello", JSON.parseObject(userPayload.getValue()).getString("text"));
     }
 
     @Test
     void shouldReturnServerSentEventsForStreamingRequest() {
         Agent agent = enabledAgent("agent-a", AgentProvider.CLAUDE_CODE);
         AgentSession session = session("session-1", "agent-a");
-        AgentMessage assistantPlaceholder = assistantMessage("assistant-1", "session-1");
         String requestJson = """
                 {
                   "model": "claude-sonnet",
                   "max_tokens": 1024,
                   "stream": true,
-                  "messages": [
-                    {
-                      "role": "user",
-                      "content": "hello"
-                    }
-                  ]
+                  "messages": [{"role": "user", "content": "hello"}]
                 }
                 """;
         Flux<MessagesEvent> result = Flux.just(
@@ -194,17 +185,20 @@ class AnthropicMessagesServiceTest {
         when(agentSessionRepository.findByCodeAndAgentCode("session-1", "agent-a")).thenReturn(Optional.of(session));
         when(agentRegistry.findMessagesAgent(AgentProvider.CLAUDE_CODE)).thenReturn(Optional.of(messagesAgent));
         when(messagesAgent.stream("agent-a", requestJson, "session-1")).thenReturn(result);
-        when(agentSessionDomainService.appendMessage(eq("session-1"), any(AgentMessage.class))).thenReturn(session);
-        when(agentSessionDomainService.appendMessageAndReturnMessage(eq("session-1"), any(AgentMessage.class)))
-                .thenReturn(assistantPlaceholder);
-        when(agentSessionDomainService.completeMessage(eq("assistant-1"), any(String.class), eq("msg_1")))
-                .thenReturn(assistantPlaceholder);
+        when(messagesEventBlockRecorderFactory.create(eq("session-1"), any(), eq(MessageProtocolType.ANTHROPIC_MESSAGES)))
+                .thenReturn(recorder);
 
-        AnthropicMessagesService.AnthropicMessagesResult response = anthropicMessagesService.create("agent-a", "session-1", requestJson);
-        List<ServerSentEvent<String>> events = response.events().collectList().block();
+        AnthropicMessagesService.AnthropicMessagesResult response =
+                anthropicMessagesService.create("agent-a", "session-1", requestJson);
 
         assertEquals("session-1", response.sessionCode());
         assertNull(response.messageJson());
+
+        // 取出 SSE 流，仅过滤标准事件（含 message_start / message_stop），剔除 keepalive 注释行
+        List<ServerSentEvent<String>> events = response.events()
+                .filter(sse -> sse.event() != null)
+                .collectList()
+                .block();
         assertNotNull(events);
         assertEquals(2, events.size());
         assertEquals("message_start", events.getFirst().event());
@@ -218,12 +212,7 @@ class AnthropicMessagesServiceTest {
         String requestJson = """
                 {
                   "model": "claude-sonnet",
-                  "messages": [
-                    {
-                      "role": "user",
-                      "content": "hello"
-                    }
-                  ]
+                  "messages": [{"role": "user", "content": "hello"}]
                 }
                 """;
 
@@ -245,12 +234,7 @@ class AnthropicMessagesServiceTest {
                 {
                   "model": "claude-sonnet",
                   "max_tokens": 1024,
-                  "messages": [
-                    {
-                      "role": "user",
-                      "content": "hello"
-                    }
-                  ]
+                  "messages": [{"role": "user", "content": "hello"}]
                 }
                 """;
 
@@ -276,14 +260,7 @@ class AnthropicMessagesServiceTest {
                     {
                       "role": "user",
                       "content": [
-                        {
-                          "type": "image",
-                          "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": "abc"
-                          }
-                        }
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc"}}
                       ]
                     }
                   ]
@@ -318,14 +295,5 @@ class AnthropicMessagesServiceTest {
         session.setAgentCode(agentCode);
         session.setTitle("test");
         return session;
-    }
-
-    private AgentMessage assistantMessage(String messageCode, String sessionCode) {
-        AgentMessage message = new AgentMessage();
-        message.setCode(messageCode);
-        message.setSessionCode(sessionCode);
-        message.setRole(MessageRole.ASSISTANT);
-        message.setStatus(MessageStatus.STREAMING);
-        return message;
     }
 }

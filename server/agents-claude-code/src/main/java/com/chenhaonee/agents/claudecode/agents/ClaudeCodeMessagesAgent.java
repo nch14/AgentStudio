@@ -60,6 +60,15 @@ public class ClaudeCodeMessagesAgent implements MessagesAgent {
     }
 
     @Override
+    public boolean cancelStream(String sessionCode) {
+        boolean interrupted = sessionRegistry.interruptActiveTurn(sessionCode);
+        if (interrupted) {
+            log.info("Claude messages turn interrupted for sessionCode={}", sessionCode);
+        }
+        return interrupted;
+    }
+
+    @Override
     public Flux<MessagesEvent> stream(String agentCode, String requestJson, String sessionCode) {
         Map<String, String> providerConfig = agentConfigApi.getProviderConfig(agentCode);
         String providerSessionId = StringUtils.trimToNull(sessionApi.getProviderSessionId(

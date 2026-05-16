@@ -87,14 +87,16 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(4, events.size());
-        assertEquals("message_start", events.get(0).eventType());
-        assertEquals("content_block_delta", events.get(1).eventType());
-        assertEquals("message_delta", events.get(2).eventType());
-        assertEquals("message_stop", events.get(3).eventType());
-        JSONObject delta = JSONObject.parseObject(events.get(1).dataJson());
+        assertEquals(6, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_start", events.get(1).eventType());
+        assertEquals("content_block_delta", events.get(2).eventType());
+        assertEquals("message_delta", events.get(3).eventType());
+        assertEquals("message_stop", events.get(4).eventType());
+        assertEquals("turn_stop", events.get(5).eventType());
+        JSONObject delta = JSONObject.parseObject(events.get(2).dataJson());
         assertEquals("hello", delta.getJSONObject("delta").getString("text"));
-        JSONObject messageDelta = JSONObject.parseObject(events.get(2).dataJson());
+        JSONObject messageDelta = JSONObject.parseObject(events.get(3).dataJson());
         assertEquals("end_turn", messageDelta.getJSONObject("delta").getString("stop_reason"));
         verify(sessionApi).bind(
                 SessionRelationTargetType.AGENT_SESSION,
@@ -133,9 +135,10 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(1, events.size());
-        assertEquals("error", events.getFirst().eventType());
-        JSONObject body = JSONObject.parseObject(events.getFirst().dataJson());
+        assertEquals(2, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("error", events.get(1).eventType());
+        JSONObject body = JSONObject.parseObject(events.get(1).dataJson());
         assertEquals("api_error", body.getJSONObject("error").getString("type"));
         assertEquals("rate limited", body.getJSONObject("error").getString("message"));
     }
@@ -177,9 +180,11 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(2, events.size());
-        assertEquals("message_delta", events.get(0).eventType());
-        assertEquals("message_stop", events.get(1).eventType());
+        assertEquals(4, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_delta", events.get(1).eventType());
+        assertEquals("message_stop", events.get(2).eventType());
+        assertEquals("turn_stop", events.get(3).eventType());
     }
 
     @Test
@@ -214,8 +219,10 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(1, events.size());
-        assertEquals("message_stop", events.getFirst().eventType());
+        assertEquals(3, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_stop", events.get(1).eventType());
+        assertEquals("turn_stop", events.get(2).eventType());
     }
 
     private ClaudeCodeMessagesAgent newMessagesAgent() {
