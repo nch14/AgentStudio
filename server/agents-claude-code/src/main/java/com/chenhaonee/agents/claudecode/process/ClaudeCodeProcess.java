@@ -1,6 +1,8 @@
 package com.chenhaonee.agents.claudecode.process;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonEvent;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonParser;
 import org.slf4j.Logger;
@@ -145,6 +147,19 @@ public class ClaudeCodeProcess {
      * 本轮事件由独立 sink 承载，读到 {@code type=result} 后完成。
      */
     public Flux<StreamJsonEvent> startTurn(String userInput) throws IOException {
+        JSONArray content = new JSONArray();
+        JSONObject textBlock = new JSONObject();
+        textBlock.put("type", "text");
+        textBlock.put("text", userInput);
+        content.add(textBlock);
+        return startTurn(content);
+    }
+
+    /**
+     * 多模态 user content 数组形态。content 元素为 Anthropic 风格的 content block
+     * （text / image / document），由调用方组装并已完成 base64 编码。
+     */
+    public Flux<StreamJsonEvent> startTurn(JSONArray userContent) throws IOException {
         synchronized (turnLock) {
             if (!started || stdinWriter == null) {
                 throw new IllegalStateException("Process not started");
@@ -159,7 +174,7 @@ public class ClaudeCodeProcess {
             ActiveTurn activeTurn = new ActiveTurn(Sinks.many().replay().limit(TURN_EVENT_REPLAY_LIMIT),
                     System.currentTimeMillis());
             activeTurnRef.set(activeTurn);
-            String jsonLine = buildUserMessage(userInput);
+            String jsonLine = buildUserMessage(userContent);
             try {
                 stdinWriter.write(jsonLine);
                 stdinWriter.write("\n");
@@ -180,6 +195,47 @@ public class ClaudeCodeProcess {
             ActiveTurn activeTurn = activeTurnRef.get();
             return activeTurn == null ? Flux.empty() : activeTurn.sink().asFlux();
         });
+    }
+
+    /**
+     * 向 stdin 写入 stream-json control_request 消息，请求 CLI 中断当前 turn。
+     *
+     * <p>CLI 收到后自行 abort 当前工具调用与模型思考，最终发出 {@code result}
+     * 事件让 turn 自然结束。进程保持存活，session 状态保留，下一轮可继续使用
+     * 同一进程，无需 {@code --resume}。</p>
+     *
+     * @return true 表示成功写入；false 表示进程未启动或无活跃 turn 或 IO 失败
+     */
+    public boolean interruptActiveTurn() {
+        synchronized (turnLock) {
+            if (!started || stdinWriter == null) {
+                return false;
+            }
+            if (process == null || !process.isAlive()) {
+                return false;
+            }
+            if (activeTurnRef.get() == null) {
+                return false;
+            }
+            String requestId = "req_interrupt_" + System.nanoTime();
+            JSONObject request = new JSONObject();
+            request.put("subtype", "interrupt");
+            JSONObject controlRequest = new JSONObject();
+            controlRequest.put("type", "control_request");
+            controlRequest.put("request_id", requestId);
+            controlRequest.put("request", request);
+            String line = JSON.toJSONString(controlRequest);
+            try {
+                stdinWriter.write(line);
+                stdinWriter.write("\n");
+                stdinWriter.flush();
+                log.info("Sent interrupt control_request: requestId={}", requestId);
+                return true;
+            } catch (IOException e) {
+                log.warn("Failed to write interrupt to stdin", e);
+                return false;
+            }
+        }
     }
 
     /**
@@ -338,9 +394,8 @@ public class ClaudeCodeProcess {
     }
 
     /** 构造 stream-json 格式的 user message 行（不含末尾换行）。 */
-    private String buildUserMessage(String userInput) {
-        Map<String, Object> textPart = Map.of("type", "text", "text", userInput);
-        Map<String, Object> message = Map.of("role", "user", "content", List.of(textPart));
+    private String buildUserMessage(JSONArray userContent) {
+        Map<String, Object> message = Map.of("role", "user", "content", userContent);
         Map<String, Object> wrapper = Map.of("type", "user", "message", message);
         return JSON.toJSONString(wrapper);
     }

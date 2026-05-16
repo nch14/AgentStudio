@@ -1,5 +1,6 @@
 package com.chenhaonee.agents.claudecode.agents;
 
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
 import com.chenhaonee.agents.claudecode.process.ChatProcessSpec;
@@ -23,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -74,7 +76,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, "claude-sonnet", "system prompt")),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(messageStart, deltaEvent, resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(messageStart, deltaEvent, resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -87,14 +89,16 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(4, events.size());
-        assertEquals("message_start", events.get(0).eventType());
-        assertEquals("content_block_delta", events.get(1).eventType());
-        assertEquals("message_delta", events.get(2).eventType());
-        assertEquals("message_stop", events.get(3).eventType());
-        JSONObject delta = JSONObject.parseObject(events.get(1).dataJson());
+        assertEquals(6, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_start", events.get(1).eventType());
+        assertEquals("content_block_delta", events.get(2).eventType());
+        assertEquals("message_delta", events.get(3).eventType());
+        assertEquals("message_stop", events.get(4).eventType());
+        assertEquals("turn_stop", events.get(5).eventType());
+        JSONObject delta = JSONObject.parseObject(events.get(2).dataJson());
         assertEquals("hello", delta.getJSONObject("delta").getString("text"));
-        JSONObject messageDelta = JSONObject.parseObject(events.get(2).dataJson());
+        JSONObject messageDelta = JSONObject.parseObject(events.get(3).dataJson());
         assertEquals("end_turn", messageDelta.getJSONObject("delta").getString("stop_reason"));
         verify(sessionApi).bind(
                 SessionRelationTargetType.AGENT_SESSION,
@@ -122,7 +126,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, null)),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(errorEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(errorEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -133,9 +137,10 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(1, events.size());
-        assertEquals("error", events.getFirst().eventType());
-        JSONObject body = JSONObject.parseObject(events.getFirst().dataJson());
+        assertEquals(2, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("error", events.get(1).eventType());
+        JSONObject body = JSONObject.parseObject(events.get(1).dataJson());
         assertEquals("api_error", body.getJSONObject("error").getString("type"));
         assertEquals("rate limited", body.getJSONObject("error").getString("message"));
     }
@@ -158,7 +163,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, "sys-a\nsys-b")),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("part-1\npart-2")).thenReturn(Flux.just(resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -177,9 +182,11 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(2, events.size());
-        assertEquals("message_delta", events.get(0).eventType());
-        assertEquals("message_stop", events.get(1).eventType());
+        assertEquals(4, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_delta", events.get(1).eventType());
+        assertEquals("message_stop", events.get(2).eventType());
+        assertEquals("turn_stop", events.get(3).eventType());
     }
 
     @Test
@@ -203,7 +210,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, null)),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(messageStop, resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(messageStop, resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -214,8 +221,10 @@ class ClaudeCodeMessagesAgentTest {
                 }
                 """, "session-1").collectList().block();
 
-        assertEquals(1, events.size());
-        assertEquals("message_stop", events.getFirst().eventType());
+        assertEquals(3, events.size());
+        assertEquals("turn_start", events.get(0).eventType());
+        assertEquals("message_stop", events.get(1).eventType());
+        assertEquals("turn_stop", events.get(2).eventType());
     }
 
     private ClaudeCodeMessagesAgent newMessagesAgent() {

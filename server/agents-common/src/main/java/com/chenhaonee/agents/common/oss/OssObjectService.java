@@ -14,8 +14,12 @@ import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -31,10 +35,12 @@ public class OssObjectService {
     private String bucket;
 
     private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
     private final AtomicBoolean bucketPrepared = new AtomicBoolean(false);
 
-    public OssObjectService(S3Client s3Client) {
+    public OssObjectService(S3Client s3Client, S3Presigner s3Presigner) {
         this.s3Client = s3Client;
+        this.s3Presigner = s3Presigner;
     }
 
     /**
@@ -60,14 +66,20 @@ public class OssObjectService {
      * 从 OSS 读取文本内容。
      */
     public String readAsString(String objectKey) {
+        return new String(readAsBytes(objectKey), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 从 OSS 读取字节内容。
+     */
+    public byte[] readAsBytes(String objectKey) {
         ensureBucket();
         try {
-            byte[] data = s3Client.getObjectAsBytes(GetObjectRequest.builder()
+            return s3Client.getObjectAsBytes(GetObjectRequest.builder()
                             .bucket(bucket)
                             .key(objectKey)
                             .build())
                     .asByteArray();
-            return new String(data, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException("读取 OSS 对象失败, key=" + objectKey + ", cause=" + e.getMessage(), e);
         }
@@ -102,6 +114,20 @@ public class OssObjectService {
         } catch (Exception e) {
             throw new RuntimeException("列举 OSS 对象失败, prefix=" + prefix + ", cause=" + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 生成 OSS 对象的预签名 GET URL。
+     */
+    public URL presignGetObject(String objectKey, Duration expiration) {
+        GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(expiration)
+                .getObjectRequest(GetObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(objectKey)
+                        .build())
+                .build();
+        return s3Presigner.presignGetObject(presignRequest).url();
     }
 
     /**

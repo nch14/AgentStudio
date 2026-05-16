@@ -1,6 +1,7 @@
 package com.chenhaonee.agents.app.conversation;
 
-import com.chenhaonee.agents.app.application.conversation.AgentConversationFacade;
+import com.chenhaonee.agents.app.application.conversation.AnthropicMessagesService;
+import com.chenhaonee.agents.app.application.conversation.AnthropicMessagesService.AnthropicMessagesResult;
 import com.chenhaonee.agents.app.interfaces.http.conversation.AgentConversationMessageController;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.codec.ServerSentEvent;
@@ -22,9 +23,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AgentConversationMessageControllerTest {
 
-    private final AgentConversationFacade agentConversationFacade = mock(AgentConversationFacade.class);
+    private final AnthropicMessagesService anthropicMessagesService = mock(AnthropicMessagesService.class);
     private final MockMvc mockMvc = MockMvcBuilders.standaloneSetup(
-            new AgentConversationMessageController(agentConversationFacade)).build();
+            new AgentConversationMessageController(anthropicMessagesService)).build();
 
     @Test
     void shouldAcceptContentOnlyAndAlwaysReturnSse() throws Exception {
@@ -34,12 +35,8 @@ class AgentConversationMessageControllerTest {
                         .data("{\"type\":\"message_start\"}")
                         .build()
         );
-        when(agentConversationFacade.sendMessage("agent-a", "session-1", "你好"))
-                .thenReturn(new AgentConversationFacade.StreamingConversationResult(
-                        "session-1",
-                        "ANTHROPIC_MESSAGES",
-                        events
-                ));
+        when(anthropicMessagesService.createStreaming("agent-a", "session-1", "你好", null))
+                .thenReturn(AnthropicMessagesResult.streaming("session-1", events));
 
         MvcResult mvcResult = mockMvc.perform(post("/api/v1/agents/{agentCode}/messages", "agent-a")
                         .header("X-Agent-Session-Code", "session-1")
@@ -53,7 +50,6 @@ class AgentConversationMessageControllerTest {
                 .andExpect(content().contentTypeCompatibleWith("text/event-stream"))
                 .andExpect(header().string("X-Agent-Code", "agent-a"))
                 .andExpect(header().string("X-Agent-Session-Code", "session-1"))
-                .andExpect(header().string("X-Agent-Protocol", "ANTHROPIC_MESSAGES"))
                 .andExpect(content().string(containsString("event:message_start")))
                 .andExpect(content().string(containsString("data:{\"type\":\"message_start\"}")));
     }
@@ -66,12 +62,8 @@ class AgentConversationMessageControllerTest {
                         .data("{\"id\":\"chatcmpl_1\"}")
                         .build()
         );
-        when(agentConversationFacade.sendMessage("agent-a", null, "帮我写个摘要"))
-                .thenReturn(new AgentConversationFacade.StreamingConversationResult(
-                        "session-new",
-                        "ANTHROPIC_MESSAGES",
-                        events
-                ));
+        when(anthropicMessagesService.createStreaming("agent-a", null, "帮我写个摘要", null))
+                .thenReturn(AnthropicMessagesResult.streaming("session-new", events));
 
         MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.post("/api/v1/agents/{agentCode}/messages", "agent-a")
                         .contentType("application/json")
@@ -83,7 +75,6 @@ class AgentConversationMessageControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("text/event-stream"))
                 .andExpect(header().string("X-Agent-Code", "agent-a"))
-                .andExpect(header().string("X-Agent-Session-Code", "session-new"))
-                .andExpect(header().string("X-Agent-Protocol", "ANTHROPIC_MESSAGES"));
+                .andExpect(header().string("X-Agent-Session-Code", "session-new"));
     }
 }

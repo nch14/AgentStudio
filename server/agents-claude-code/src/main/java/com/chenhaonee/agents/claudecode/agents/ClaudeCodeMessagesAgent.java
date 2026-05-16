@@ -51,12 +51,21 @@ public class ClaudeCodeMessagesAgent implements MessagesAgent {
     private record MessagesConversation(Mono<String> resolvedSessionId, Flux<MessagesEvent> events) {
     }
 
-    private record MessagesRequestContext(String model, String systemPrompt, String userInput) {
+    private record MessagesRequestContext(String model, String systemPrompt, JSONArray userContent) {
     }
 
     @Override
     public AgentProvider supportedType() {
         return AgentProvider.CLAUDE_CODE;
+    }
+
+    @Override
+    public boolean cancelStream(String sessionCode) {
+        boolean interrupted = sessionRegistry.interruptActiveTurn(sessionCode);
+        if (interrupted) {
+            log.info("Claude messages turn interrupted for sessionCode={}", sessionCode);
+        }
+        return interrupted;
     }
 
     @Override
@@ -111,7 +120,7 @@ public class ClaudeCodeMessagesAgent implements MessagesAgent {
         ClaudeCodeProcess process = sessionRegistry.acquire(sessionCode, spec, providerSessionId);
         Flux<StreamJsonEvent> turnEvents;
         try {
-            turnEvents = process.startTurn(requestContext.userInput());
+            turnEvents = process.startTurn(requestContext.userContent());
         } catch (Exception e) {
             sessionRegistry.release(sessionCode);
             throw new RuntimeException("Failed to start Claude messages turn for sessionCode=" + sessionCode, e);
@@ -176,24 +185,18 @@ public class ClaudeCodeMessagesAgent implements MessagesAgent {
         JSONObject root = JSON.parseObject(requestJson);
         String model = StringUtils.firstNonBlank(root.getString("model"), providerConfig.get("model"), properties.getDefaultModel());
         String systemPrompt = extractSystemPrompt(root.get("system"));
-        String userInput = extractLatestUserText(root.getJSONArray("messages"));
-        if (StringUtils.isBlank(userInput)) {
-            throw new IllegalArgumentException("anthropic messages request must contain latest user text content");
+        JSONArray userContent = extractLatestUserContent(root.getJSONArray("messages"));
+        if (userContent == null || userContent.isEmpty()) {
+            throw new IllegalArgumentException("anthropic messages request must contain latest user content");
         }
-        return new MessagesRequestContext(model, systemPrompt, userInput);
+        return new MessagesRequestContext(model, systemPrompt, userContent);
     }
 
-    private String extractSystemPrompt(Object systemValue) {
-        if (systemValue instanceof String text) {
-            return StringUtils.trimToNull(text);
-        }
-        if (systemValue instanceof JSONArray blocks) {
-            return collectTextBlocks(blocks);
-        }
-        return null;
-    }
-
-    private String extractLatestUserText(JSONArray messages) {
+    /**
+     * 取最近一条 user message 的 content。若是字符串，包装为单 text block；
+     * 若是数组，原样透传（保留 image / document / tool_result 等多模态 block）。
+     */
+    private JSONArray extractLatestUserContent(JSONArray messages) {
         if (messages == null || messages.isEmpty()) {
             return null;
         }
@@ -203,12 +206,27 @@ public class ClaudeCodeMessagesAgent implements MessagesAgent {
                 continue;
             }
             Object content = message.get("content");
-            if (content instanceof String text) {
-                return StringUtils.trimToNull(text);
+            if (content instanceof String text && StringUtils.isNotBlank(text)) {
+                JSONArray array = new JSONArray();
+                JSONObject block = new JSONObject();
+                block.put("type", "text");
+                block.put("text", text);
+                array.add(block);
+                return array;
             }
             if (content instanceof JSONArray blocks) {
-                return collectTextBlocks(blocks);
+                return blocks;
             }
+        }
+        return null;
+    }
+
+    private String extractSystemPrompt(Object systemValue) {
+        if (systemValue instanceof String text) {
+            return StringUtils.trimToNull(text);
+        }
+        if (systemValue instanceof JSONArray blocks) {
+            return collectTextBlocks(blocks);
         }
         return null;
     }

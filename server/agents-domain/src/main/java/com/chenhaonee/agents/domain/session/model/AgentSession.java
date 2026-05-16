@@ -3,6 +3,8 @@ package com.chenhaonee.agents.domain.session.model;
 import com.chenhaonee.agents.domain.common.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -27,7 +29,14 @@ public class AgentSession extends BaseEntity {
     @Column(length = 128, nullable = false, updatable = false)
     private String agentCode;
 
+    /** 会话场景：CHAT 对话 / TASK 任务 */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 16)
+    private SessionScene scene;
+
     private int messageCount;
+
+    private int turnCount;
 
     private Instant lastMessageTime;
 
@@ -42,6 +51,13 @@ public class AgentSession extends BaseEntity {
         if (lastMessageTime == null || messageTime.isAfter(lastMessageTime)) {
             this.lastMessageTime = messageTime;
         }
+    }
+
+    /**
+     * 新轮次首次写入时调用，增加轮次计数。
+     */
+    public void incrementTurnCount() {
+        turnCount++;
     }
 
     public void rename(String title) {

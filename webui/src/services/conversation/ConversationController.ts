@@ -1,9 +1,11 @@
 /* eslint-disable */
 import { request } from '@umijs/max';
+import { getToken } from '@/utils/auth';
 import type {
   AgentSessionResponse,
-  AgentMessageResponse,
+  AgentSessionTurnDTO,
   RenameAgentSessionRequest,
+  CursorPageResponse,
 } from './typings';
 
 const BASE_URL = '/api/v1/agents';
@@ -39,14 +41,14 @@ export async function getSessionDetail(
   );
 }
 
-/** 分页查询会话消息列表 */
+/** 分页查询会话消息列表（按 turn 聚合返回） */
 export async function listMessages(
   agentCode: string,
   sessionCode: string,
   params: { page?: number; size?: number },
   options?: { [key: string]: any },
 ) {
-  return request<{ data: AgentMessageResponse[]; total: number }>(
+  return request<{ data: AgentSessionTurnDTO[]; total: number }>(
     `${BASE_URL}/${agentCode}/sessions/${sessionCode}/messages`,
     {
       method: 'GET',
@@ -54,6 +56,45 @@ export async function listMessages(
       ...(options || {}),
     },
   );
+}
+
+/** 游标分页查询会话消息列表（按 turn 聚合返回） */
+export async function listMessagesByCursor(
+  agentCode: string,
+  sessionCode: string,
+  params: { cursor?: number; size?: number },
+  options?: { [key: string]: any },
+) {
+  return request<CursorPageResponse<AgentSessionTurnDTO>>(
+    `${BASE_URL}/${agentCode}/sessions/${sessionCode}/messages/cursor`,
+    {
+      method: 'GET',
+      params,
+      ...(options || {}),
+    },
+  );
+}
+
+/** SSE 流式恢复接口 */
+export async function streamResume(
+  agentCode: string,
+  sessionCode: string,
+  params?: { fromIndex?: number },
+  options?: { [key: string]: any },
+) {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    'Accept': 'text/event-stream',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const query = params?.fromIndex !== undefined ? `?fromIndex=${params.fromIndex}` : '';
+  return fetch(`${BASE_URL}/${agentCode}/sessions/${sessionCode}/messages/stream${query}`, {
+    method: 'GET',
+    headers,
+    signal: options?.signal,
+  });
 }
 
 /** 重命名会话 */
@@ -95,6 +136,21 @@ export async function unarchiveSession(
     method: 'POST',
     ...(options || {}),
   });
+}
+
+/** 中断会话的活跃流式对话 */
+export async function interruptStream(
+  agentCode: string,
+  sessionCode: string,
+  options?: { [key: string]: any },
+) {
+  return request<{ data: { interrupted: boolean } }>(
+    `${BASE_URL}/${agentCode}/sessions/${sessionCode}/stream`,
+    {
+      method: 'DELETE',
+      ...(options || {}),
+    },
+  );
 }
 
 /** 删除会话 */

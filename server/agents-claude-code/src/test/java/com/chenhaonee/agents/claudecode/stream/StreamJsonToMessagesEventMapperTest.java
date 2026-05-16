@@ -14,7 +14,7 @@ class StreamJsonToMessagesEventMapperTest {
     private final StreamJsonToMessagesEventMapper mapper = new StreamJsonToMessagesEventMapper();
 
     @Test
-    void shouldPassThroughStreamEventAndSupplementSuccessfulResultTail() {
+    void shouldWrapStreamEventsWithTurnStartAndTurnStop() {
         StreamJsonEvent messageStart = parse("""
                 {"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[]}},"session_id":"provider-session-1"}
                 """);
@@ -29,13 +29,15 @@ class StreamJsonToMessagesEventMapperTest {
                 .collectList()
                 .block();
 
-        assertEquals(4, projected.size());
-        assertEquals("message_start", projected.get(0).eventType());
-        assertEquals("content_block_delta", projected.get(1).eventType());
-        assertEquals("message_delta", projected.get(2).eventType());
-        assertEquals("message_stop", projected.get(3).eventType());
+        assertEquals(6, projected.size());
+        assertEquals("turn_start", projected.get(0).eventType());
+        assertEquals("message_start", projected.get(1).eventType());
+        assertEquals("content_block_delta", projected.get(2).eventType());
+        assertEquals("message_delta", projected.get(3).eventType());
+        assertEquals("message_stop", projected.get(4).eventType());
+        assertEquals("turn_stop", projected.get(5).eventType());
 
-        JSONObject messageDelta = JSONObject.parseObject(projected.get(2).dataJson());
+        JSONObject messageDelta = JSONObject.parseObject(projected.get(3).dataJson());
         assertEquals("message_delta", messageDelta.getString("type"));
         assertEquals("end_turn", messageDelta.getJSONObject("delta").getString("stop_reason"));
     }
@@ -53,8 +55,10 @@ class StreamJsonToMessagesEventMapperTest {
                 .collectList()
                 .block();
 
-        assertEquals(1, projected.size());
-        assertEquals("message_stop", projected.getFirst().eventType());
+        assertEquals(3, projected.size());
+        assertEquals("turn_start", projected.get(0).eventType());
+        assertEquals("message_stop", projected.get(1).eventType());
+        assertEquals("turn_stop", projected.get(2).eventType());
     }
 
     @Test
@@ -65,9 +69,10 @@ class StreamJsonToMessagesEventMapperTest {
 
         List<MessagesEvent> projected = mapper.project(Flux.just(event)).collectList().block();
 
-        assertEquals(1, projected.size());
-        assertEquals("error", projected.getFirst().eventType());
-        JSONObject data = JSONObject.parseObject(projected.getFirst().dataJson());
+        assertEquals(2, projected.size());
+        assertEquals("turn_start", projected.get(0).eventType());
+        assertEquals("error", projected.get(1).eventType());
+        JSONObject data = JSONObject.parseObject(projected.get(1).dataJson());
         assertEquals("error", data.getString("type"));
         assertEquals("api_error", data.getJSONObject("error").getString("type"));
         assertEquals("rate limited", data.getJSONObject("error").getString("message"));

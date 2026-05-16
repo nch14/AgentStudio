@@ -131,6 +131,26 @@ public class ChatSessionRegistry {
     }
 
     /**
+     * 用户主动中断：通过 stream-json control_request 让 CLI 自身中断当前 turn。
+     *
+     * <p>相比 destroyForcibly 子进程，此方式更轻量：进程保持存活，session 状态
+     * 保留，下一轮请求可直接复用同一进程，无需 {@code --resume}。CLI 收到后
+     * 自行 abort 工具调用与思考，最终通过 {@code result} 事件让 turn 自然结束。</p>
+     *
+     * @return true 表示成功向 CLI 写入中断指令；false 表示 session 不在池中或写入失败
+     */
+    public boolean interruptActiveTurn(String sessionCode) {
+        TrackedChatProcess tp = pool.get(sessionCode);
+        if (tp == null) {
+            return false;
+        }
+        if (tp.state().get() != ChatProcessState.ACTIVE) {
+            return false;
+        }
+        return tp.process().interruptActiveTurn();
+    }
+
+    /**
      * 返回当前池中的活跃进程数（供监控/度量使用）。
      */
     public int poolSize() {

@@ -6,18 +6,19 @@ import {
   RobotOutlined, UserOutlined, PlusOutlined,
   MessageOutlined, DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
   CheckCircleOutlined, ToolOutlined, CoffeeOutlined,
-  FolderOutlined, InboxOutlined, EditOutlined
+  FolderOutlined, InboxOutlined, EditOutlined, PaperClipOutlined
 } from '@ant-design/icons';
 import { Bubble, Sender, Welcome, Conversations, Think, ThoughtChain } from '@ant-design/x';
 import XMarkdown from '@ant-design/x-markdown';
 import './style.less';
 import AgentSelect from './components/AgentSelect';
-import { listAgents } from '@/services/agent/AgentController';
+import { listChatAgents } from '@/services/agent/AgentController';
 import type { AgentDetailResponse } from '@/services/agent/typings';
-import { listSessions, listMessages, deleteSession, archiveSession, unarchiveSession, renameSession } from '@/services/conversation/ConversationController';
-import { chatStream } from '@/services/conversation/AgentMessageService';
-import type { AgentSessionResponse, AgentMessageResponse, ChatStreamData, ContentBlock } from '@/services/conversation/typings';
+import { listSessions, listMessagesByCursor, streamResume, deleteSession, archiveSession, unarchiveSession, renameSession, interruptStream } from '@/services/conversation/ConversationController';
+import { chatStream, streamResume as chatStreamResume, normalizeToolResultContent } from '@/services/conversation/AgentMessageService';
+import type { AgentSessionResponse, AgentSessionBlockDTO, ChatStreamData, ContentBlock } from '@/services/conversation/typings';
 import AgentFileWorkspace from '@/components/AgentFileWorkspace';
+import { getUploadUrl, uploadToOss } from '@/services/oss/OssFileService';
 
 const { Text, Title } = Typography;
 
@@ -39,14 +40,43 @@ export default function ChatPage() {
   const [renameTitle, setRenameTitle] = useState('');
   const [fileSidebarVisible, setFileSidebarVisible] = useState(false);
   
-  // Messaging states
-  const [messages, setMessages] = useState<AgentMessageResponse[]>([]);
+  // Messaging states — renderItems: each element is a group of consecutive same-role blocks
+  const [renderItems, setRenderItems] = useState<{ id: string; role: 'user' | 'assistant'; blocks: ContentBlock[] }[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [currentContent, setCurrentContent] = useState('');
   const [currentBlocks, setCurrentBlocks] = useState<ContentBlock[]>([]);
-  const [currentProtocolType, setCurrentProtocolType] = useState<string>('');
+
+  // Cursor pagination states
+  const messageCursorRef = useRef<{ nextCursor: number | null; hasMore: boolean; loadingMore: boolean }>({
+    nextCursor: null,
+    hasMore: false,
+    loadingMore: false,
+  });
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentStreamSessionCodeRef = useRef<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Attachment states
+  const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const ALLOWED_DOC_TYPES = ['application/pdf', 'text/plain', 'text/markdown'];
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+  const MAX_DOC_SIZE = 32 * 1024 * 1024; // 32MB
+  const MAX_ATTACHMENTS = 10;
+  const MAX_IMAGES = 8;
+  const MAX_DOCUMENTS = 2;
+
+  interface PendingAttachment {
+    uid: string;
+    file: File;
+    previewUrl?: string;
+    ossKey?: string;
+    publicUrl?: string;
+    uploading: boolean;
+    error?: string;
+  }
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -55,7 +85,7 @@ export default function ChatPage() {
 
   const fetchAgents = async () => {
     try {
-      const res = await listAgents({ page: 0, size: 100 });
+      const res = await listChatAgents();
       setAgents(res.data || []);
       if (res.data?.length > 0) {
         // If current selectedAgent is not in the list, fall back
@@ -84,7 +114,7 @@ export default function ChatPage() {
         // Validate if selectedSessionCode (could be from URL) is in the current session list
         if (selectedSessionCode && !res.data?.some(s => s.code === selectedSessionCode)) {
           setSelectedSessionCode('');
-          setMessages([]);
+          setRenderItems([]);
         }
       }
 
@@ -116,15 +146,96 @@ export default function ChatPage() {
     }
   }, [selectedAgent]);
 
-  const fetchSessionMessages = async (agentCode: string, sessionCode: string) => {
+  const fetchSessionMessages = async (agentCode: string, sessionCode: string, cursor?: number, append = false) => {
     try {
-      setLoadingMessages(true);
-      const res = await listMessages(agentCode, sessionCode, { page: 0, size: 100 });
-      setMessages(res.data || []);
+      if (!append) {
+        setLoadingMessages(true);
+      } else {
+        messageCursorRef.current.loadingMore = true;
+      }
+      const res = await listMessagesByCursor(agentCode, sessionCode, { cursor, size: 20 });
+
+      // Update cursor state
+      messageCursorRef.current.nextCursor = res.nextCursor;
+      messageCursorRef.current.hasMore = res.hasMore;
+
+      // Flatten turns into role-grouped render items.
+      const items: { id: string; role: 'user' | 'assistant'; blocks: ContentBlock[] }[] = [];
+
+      for (const turn of res.data || []) {
+        let blockIdx = 0;
+        let currentGroup: { role: 'user' | 'assistant'; blocks: ContentBlock[] } | null = null;
+
+        for (const b of turn.blocks) {
+          const role = b.role === 'USER' ? 'user' as const : 'assistant' as const;
+          const block: ContentBlock = {
+            index: b.messageIndex ?? blockIdx,
+            type: (b.type || 'TEXT').toLowerCase() as ContentBlock['type'],
+            content: '',
+            status: 'completed',
+          };
+          const payload = b.payload as any;
+          if (payload) {
+            if (b.role === 'USER' && b.type === 'TEXT') {
+              block.content = payload.text || '';
+            } else if (b.type === 'TEXT') {
+              block.content = payload.text || '';
+            } else if (b.type === 'THINKING') {
+              block.content = payload.thinking || '';
+              block.signature = payload.signature;
+            } else if (b.type === 'TOOL_USE') {
+              block.toolUseId = payload.toolUseId;
+              block.toolName = payload.name;
+              block.toolInput = typeof payload.input === 'object'
+                ? JSON.stringify(payload.input, null, 2)
+                : (payload.input || '');
+            } else if (b.type === 'TOOL_RESULT') {
+              block.toolUseId = payload.toolUseId;
+              block.toolResultContent = normalizeToolResultContent(payload.content);
+              block.toolResultIsError = payload.isError || false;
+            } else if (b.type === 'IMAGE') {
+              block.url = payload.url || '';
+              block.ossKey = payload.ossKey || '';
+              block.mime = payload.mime || '';
+              block.filename = payload.filename || '';
+              block.size = payload.size || 0;
+              block.content = payload.url || '';
+            } else if (b.type === 'DOCUMENT') {
+              block.url = payload.url || '';
+              block.ossKey = payload.ossKey || '';
+              block.mime = payload.mime || '';
+              block.filename = payload.filename || '';
+              block.size = payload.size || 0;
+              block.content = payload.url || '';
+            } else if (b.type === 'TURN_START' || b.type === 'TURN_STOP') {
+              // turn sentinels, not rendered
+            }
+          }
+
+          // Start new group when role changes
+          if (!currentGroup || currentGroup.role !== role) {
+            currentGroup = { role, blocks: [] };
+            items.push({ id: `${turn.turnCode}-${role}-${blockIdx}`, ...currentGroup });
+          }
+          currentGroup.blocks.push(block);
+          blockIdx++;
+        }
+      }
+
+      if (append) {
+        // Prepend older messages to the beginning
+        setRenderItems(prev => [...items, ...prev]);
+        messageCursorRef.current.loadingMore = false;
+      } else {
+        setRenderItems(items);
+      }
     } catch (e) {
-      message.error('无法加载历史消息');
+      if (!append) {
+        message.error('无法加载历史消息');
+      }
     } finally {
       setLoadingMessages(false);
+      messageCursorRef.current.loadingMore = false;
     }
   };
 
@@ -134,9 +245,16 @@ export default function ChatPage() {
         skipNextFetchRef.current = false;
         return;
       }
+      // Abort any previous streamResume before starting new one
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       fetchSessionMessages(selectedAgent, selectedSessionCode);
+      // 消息加载后尝试恢复活跃流
+      setTimeout(() => tryStreamResume(selectedAgent, selectedSessionCode), 500);
     } else {
-      setMessages([]);
+      setRenderItems([]);
     }
   }, [selectedSessionCode, selectedAgent]);
 
@@ -144,9 +262,97 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   };
 
+  // Scroll-to-load-more: when scrolled to top and hasMore, fetch older messages
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el || messageCursorRef.current.loadingMore || !messageCursorRef.current.hasMore) return;
+    if (el.scrollTop <= 20) {
+      fetchSessionMessages(selectedAgent!, selectedSessionCode!, messageCursorRef.current.nextCursor ?? undefined, true);
+    }
+  }, [selectedAgent, selectedSessionCode]);
+
+  // Try to resume active stream after loading messages
+  const tryStreamResume = useCallback((agentCode: string, sessionCode: string) => {
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Calculate fromIndex from current renderItems: get last messageIndex + 1
+    const allBlocks = renderItems.flatMap(item => item.blocks);
+    const lastIndex = allBlocks.length > 0 ? Math.max(...allBlocks.map(b => b.index)) : -1;
+    const fromIndex = lastIndex >= 0 ? lastIndex + 1 : undefined;
+
+    let accumulatedThought = '';
+    let accumulatedContent = '';
+    let resolvedBlocks: ContentBlock[] = [];
+    let hasActiveStream = false;
+
+    const onHistoricalBlock = (block: ContentBlock, role: 'user' | 'assistant') => {
+      setRenderItems(prev => {
+        const exists = prev.some(item => item.blocks.some(b => b.index === block.index));
+        if (exists) return prev;
+        return [...prev, { id: `resumed-block-${block.index}`, role, blocks: [block] }];
+      });
+    };
+
+    const onStreamMessage = (data: ChatStreamData) => {
+      hasActiveStream = true;
+      setStreaming(true);
+
+      if (data.blocks) {
+        resolvedBlocks = data.blocks;
+        setCurrentBlocks(data.blocks);
+      }
+      if (data.thinking !== undefined) accumulatedThought = data.thinking;
+      accumulatedContent = data.content;
+
+      const display = accumulatedThought
+        ? `<think>${accumulatedThought}</think>${accumulatedContent}`
+        : accumulatedContent;
+      setCurrentContent(display);
+      scrollToBottom();
+
+      if (data.done) {
+        const assistantItem = {
+          id: `resumed-ai-item-${Date.now()}`,
+          role: 'assistant' as const,
+          blocks: resolvedBlocks.map(b => ({ ...b, status: 'completed' as const })),
+        };
+        setRenderItems(prev => [...prev, assistantItem]);
+        setCurrentContent('');
+        setCurrentBlocks([]);
+        setStreaming(false);
+        messageCursorRef.current = { nextCursor: null, hasMore: false, loadingMore: false };
+      }
+    };
+
+    const onStreamError = (err: any) => {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (!errorMsg.includes('aborted') && errorMsg !== 'AbortError') {
+        console.log('streamResume error (may be no active stream):', errorMsg);
+      }
+      if (hasActiveStream && (accumulatedContent || accumulatedThought)) {
+        const assistantItem = {
+          id: `resumed-ai-item-${Date.now()}`,
+          role: 'assistant' as const,
+          blocks: resolvedBlocks.map(b => ({ ...b, status: 'completed' as const })),
+        };
+        setRenderItems(prev => [...prev, assistantItem]);
+      }
+      setCurrentContent('');
+      setCurrentBlocks([]);
+      setStreaming(false);
+    };
+
+    const onStreamClose = () => {
+      setStreaming(false);
+    };
+
+    chatStreamResume(agentCode, sessionCode, fromIndex, onHistoricalBlock, onStreamMessage, onStreamError, onStreamClose, controller.signal);
+  }, [renderItems]);
+
   useEffect(() => {
     scrollToBottom();
-  }, [messages, currentContent]);
+  }, [renderItems, currentContent]);
 
   // Sync state to URL
   useEffect(() => {
@@ -173,11 +379,110 @@ export default function ChatPage() {
     setSearchParams(params, { replace: true });
   }, [selectedAgent, selectedSessionCode]);
 
+  // --- File attachment handling ---
 
+  const uploadSingleFile = async (uid: string, file: File, agentCode: string) => {
+    try {
+      setAttachments(prev => prev.map(a => a.uid === uid ? { ...a, uploading: true, error: undefined } : a));
+      
+      const res = await getUploadUrl(file.name, file.type, agentCode);
+      await uploadToOss(res.uploadUrl, file, res.contentType);
+      
+      setAttachments(prev => prev.map(a => a.uid === uid ? { 
+        ...a, 
+        uploading: false, 
+        ossKey: res.objectKey, 
+        publicUrl: res.publicUrl // assuming backend returns this or we can construct it
+      } : a));
+    } catch (err: any) {
+      const errorMsg = err instanceof Error ? err.message : '上传失败';
+      message.error(`${file.name}: ${errorMsg}`);
+      setAttachments(prev => prev.map(a => a.uid === uid ? { ...a, uploading: false, error: errorMsg } : a));
+    }
+  };
+
+  const validateAndAddFiles = (files: FileList | File[]) => {
+    if (!selectedAgent) {
+      message.warning('请先选择一个 Agent');
+      return;
+    }
+    const fileArray = Array.from(files);
+    if (attachments.length + fileArray.length > MAX_ATTACHMENTS) {
+      message.warning(`最多只能添加 ${MAX_ATTACHMENTS} 个附件`);
+      return;
+    }
+
+    const newAttachments: PendingAttachment[] = [];
+    let imageCount = attachments.filter(a => ALLOWED_IMAGE_TYPES.includes(a.file.type)).length;
+    let docCount = attachments.filter(a => ALLOWED_DOC_TYPES.includes(a.file.type)).length;
+
+    for (const file of fileArray) {
+      const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+      const isDoc = ALLOWED_DOC_TYPES.includes(file.type);
+
+      if (!isImage && !isDoc) {
+        message.warning(`${file.name}: 不支持的文件类型`);
+        continue;
+      }
+      if (isImage && file.size > MAX_IMAGE_SIZE) {
+        message.warning(`${file.name}: 图片大小不能超过 10MB`);
+        continue;
+      }
+      if (isDoc && file.size > MAX_DOC_SIZE) {
+        message.warning(`${file.name}: 文件大小不能超过 32MB`);
+        continue;
+      }
+      if (isImage && imageCount >= MAX_IMAGES) {
+        message.warning('图片数量已达上限（8张）');
+        continue;
+      }
+      if (isDoc && docCount >= MAX_DOCUMENTS) {
+        message.warning('文档数量已达上限（2个）');
+        continue;
+      }
+
+      if (isImage) imageCount++;
+      if (isDoc) docCount++;
+      
+      const uid = `rc-upload-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const previewUrl = isImage ? URL.createObjectURL(file) : undefined;
+      // Initialize uploading:true so spinner shows immediately
+      const att = { uid, file, previewUrl, uploading: true };
+      newAttachments.push(att);
+    }
+
+    if (newAttachments.length > 0) {
+      setAttachments(prev => [...prev, ...newAttachments]);
+      // Trigger uploads after state is committed
+      for (const att of newAttachments) {
+        uploadSingleFile(att.uid, att.file, selectedAgent);
+      }
+    }
+  };
+
+  const removeAttachment = (uid: string) => {
+    setAttachments(prev => prev.filter((a) => a.uid !== uid));
+  };
+
+  const handleFileSelect = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      validateAndAddFiles(e.target.files);
+      e.target.value = '';
+    }
+  };
+
+  // uploadAttachments is now deprecated in favor of instant upload
+
+  // --- End attachment handling ---
 
   const handleCreateNewChat = () => {
     setSelectedSessionCode('');
-    setMessages([]);
+    setRenderItems([]);
+    messageCursorRef.current = { nextCursor: null, hasMore: false, loadingMore: false };
   };
 
   const handleDeleteSession = async (session: AgentSessionResponse) => {
@@ -187,7 +492,7 @@ export default function ChatPage() {
       message.success('已删除对话');
       if (selectedSessionCode === session.code) {
         setSelectedSessionCode('');
-        setMessages([]);
+        setRenderItems([]);
       }
       fetchConversations(selectedAgent, true);
     } catch (e) {
@@ -202,7 +507,7 @@ export default function ChatPage() {
       message.success('已归档对话');
       if (selectedSessionCode === session.code) {
         setSelectedSessionCode('');
-        setMessages([]);
+        setRenderItems([]);
       }
       setSessions(prev => prev.filter(s => s.code !== session.code));
       setArchivedSessions(prev => [...prev, { ...session, archived: true }]);
@@ -238,29 +543,74 @@ export default function ChatPage() {
   };
 
   const handleSend = useCallback(async (value: string) => {
-    if (!value.trim() || !selectedAgent) return;
+    if (!selectedAgent) return;
+    const hasContent = value.trim();
+    const hasFiles = attachments.length > 0;
+    if (!hasContent && !hasFiles) return;
 
-    // Optimistic UI
-    const tempUserMsg: AgentMessageResponse = {
-      code: `temp-user-${Date.now()}`,
-      role: 'USER',
-      protocolType: '',
-      status: '',
-      payloadJson: JSON.stringify({ role: 'user', content: value }),
-      errorPayloadJson: '',
-      externalMessageId: '',
-      messageIndex: messages.length + 1,
-    };
+    // Check if all files are uploaded
+    const uploading = attachments.some(a => a.uploading);
+    if (uploading) {
+      message.warning('请等待文件上传完成');
+      return;
+    }
+    const anyError = attachments.some(a => a.error);
+    if (anyError) {
+      message.error('部分文件上传失败，请移除或重试');
+      return;
+    }
 
-    setMessages((prev) => [...prev, tempUserMsg]);
+    const attachmentMetas = attachments
+      .filter(a => a.ossKey)
+      .map(a => ({
+        ossKey: a.ossKey!,
+        mime: a.file.type,
+        filename: a.file.name,
+        size: a.file.size
+      }));
+
+    // Optimistic UI：构造用户消息 block
+    const userBlocks: ContentBlock[] = [];
+
+    if (hasFiles) {
+      for (const att of attachments) {
+        if (!att.ossKey) continue;
+        const isImage = ALLOWED_IMAGE_TYPES.includes(att.file.type);
+        userBlocks.push({
+          index: userBlocks.length,
+          type: isImage ? 'image' : 'document',
+          content: att.ossKey,
+          ossKey: att.ossKey,
+          mime: att.file.type,
+          filename: att.file.name,
+          size: att.file.size,
+          url: att.previewUrl || att.publicUrl, // Use local preview URL for instant rendering
+          status: 'completed',
+        });
+      }
+    }
+
+    if (hasContent) {
+      userBlocks.push({
+        index: userBlocks.length,
+        type: 'text',
+        content: value,
+        status: 'completed',
+      });
+    }
+
+    const tempUserItem = { id: `temp-turn-${Date.now()}`, role: 'user' as const, blocks: userBlocks };
+
+    setRenderItems((prev) => [...prev, tempUserItem]);
     setStreaming(true);
     setCurrentContent('');
     senderRef.current?.clear?.();
+    setAttachments([]);
 
     let accumulatedThought = '';
     let accumulatedContent = '';
     let currentSessionCode = selectedSessionCode;
-    let resolvedProtocolType = '';
+    currentStreamSessionCodeRef.current = selectedSessionCode;
     let resolvedBlocks: ContentBlock[] = [];
 
     const updateDisplay = () => {
@@ -274,10 +624,7 @@ export default function ChatPage() {
     const onStreamMessage = (data: ChatStreamData) => {
       if (data.sessionCode) {
         currentSessionCode = data.sessionCode;
-      }
-      if (data.protocolType) {
-        resolvedProtocolType = data.protocolType;
-        setCurrentProtocolType(data.protocolType);
+        currentStreamSessionCodeRef.current = data.sessionCode;
       }
       if (data.blocks) {
         resolvedBlocks = data.blocks;
@@ -291,26 +638,19 @@ export default function ChatPage() {
       updateDisplay();
 
       if (data.done) {
-        const assistantMsg: AgentMessageResponse = {
-          code: `temp-ai-${Date.now()}`,
-          role: 'ASSISTANT',
-          protocolType: resolvedProtocolType,
-          status: 'COMPLETED',
-          payloadJson: JSON.stringify({ 
-            role: 'assistant', 
-            content: accumulatedContent, 
-            thinking: accumulatedThought,
-            blocks: resolvedBlocks
-          }),
-          errorPayloadJson: '',
-          externalMessageId: '',
-          messageIndex: messages.length + 2,
+        // 流式结束，把助理 blocks 作为一个 render item 追加
+        const assistantItem = {
+          id: `temp-ai-item-${Date.now()}`,
+          role: 'assistant' as const,
+          blocks: resolvedBlocks.map(b => ({ ...b, status: 'completed' as const })),
         };
-        setMessages((prev) => [...prev, assistantMsg]);
+        setRenderItems((prev) => [...prev, assistantItem]);
         setCurrentContent('');
         setCurrentBlocks([]);
-        setCurrentProtocolType('');
         setStreaming(false);
+
+        // 流式结束后，重置游标以便下次加载从最新开始
+        messageCursorRef.current = { nextCursor: null, hasMore: false, loadingMore: false };
 
         if (currentSessionCode) {
           if (currentSessionCode !== selectedSessionCode) {
@@ -323,28 +663,33 @@ export default function ChatPage() {
     };
 
     const onStreamError = (err: any) => {
-      // 忽略用户主动中止或页面跳转导致的 AbortError
       const errorMsg = err instanceof Error ? err.message : String(err);
       if (errorMsg.includes('aborted') || errorMsg === 'AbortError' || errorMsg.includes('User aborted')) {
-        // 用户主动中止，无需处理
+        // 用户主动中断 — 保留已积累的输出内容
+        if (accumulatedContent || accumulatedThought || resolvedBlocks.length > 0) {
+          const partialItem = {
+            id: `temp-ai-item-${Date.now()}`,
+            role: 'assistant' as const,
+            blocks: resolvedBlocks.length > 0
+              ? resolvedBlocks.map(b => ({ ...b, status: 'completed' as const }))
+              : [{ index: 0, type: 'text' as const, content: accumulatedContent, status: 'completed' as const }],
+          };
+          setRenderItems((prev) => [...prev, partialItem]);
+
+          if (currentSessionCode && currentSessionCode !== selectedSessionCode) {
+            skipNextFetchRef.current = true;
+            setSelectedSessionCode(currentSessionCode);
+            fetchConversations(selectedAgent, true);
+          }
+        }
       } else {
         if (accumulatedContent || accumulatedThought) {
-          const assistantMsg: AgentMessageResponse = {
-            code: `temp-ai-${Date.now()}`,
-            role: 'ASSISTANT',
-            protocolType: resolvedProtocolType,
-            status: 'FAILED',
-            payloadJson: JSON.stringify({ 
-              role: 'assistant', 
-              content: accumulatedContent, 
-              thinking: accumulatedThought,
-              blocks: resolvedBlocks
-            }),
-            errorPayloadJson: '',
-            externalMessageId: '',
-            messageIndex: messages.length + 2,
+          const errorItem = {
+            id: `temp-ai-item-${Date.now()}`,
+            role: 'assistant' as const,
+            blocks: resolvedBlocks.map(b => ({ ...b, status: 'completed' as const })),
           };
-          setMessages((prev) => [...prev, assistantMsg]);
+          setRenderItems((prev) => [...prev, errorItem]);
 
           if (currentSessionCode && currentSessionCode !== selectedSessionCode) {
             setSelectedSessionCode(currentSessionCode);
@@ -356,7 +701,6 @@ export default function ChatPage() {
       }
       setCurrentContent('');
       setCurrentBlocks([]);
-      setCurrentProtocolType('');
       setStreaming(false);
     };
 
@@ -364,7 +708,6 @@ export default function ChatPage() {
       setStreaming(false);
     };
 
-    // 创建新的 AbortController
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -376,8 +719,9 @@ export default function ChatPage() {
       onStreamError,
       onStreamClose,
       controller.signal,
+      attachmentMetas.length > 0 ? attachmentMetas : undefined,
     );
-  }, [selectedAgent, selectedSessionCode, messages.length]);
+  }, [selectedAgent, selectedSessionCode, attachments]);
 
   const conversationItems = sessions.map((s) => ({
     key: s.code,
@@ -394,104 +738,26 @@ export default function ChatPage() {
   }));
 
   const renderMessages = () => {
-    const parsePayload = (msg: AgentMessageResponse) => {
-      const payload = msg.payloadJson || '';
-      if (!payload) return { content: '', thought: '', blocks: [] };
-      try {
-        const parsed = JSON.parse(payload);
+    // renderItems is already flattened into role-grouped items
+    const allItems: { role: 'user' | 'assistant'; blocks: ContentBlock[]; id: string }[] = [...renderItems];
 
-        // 1. 兼容前端乐观更新格式 (handleSend 中保存的格式)
-        if (parsed.blocks && Array.isArray(parsed.blocks)) {
-          return {
-            content: typeof parsed.content === 'string' ? parsed.content : '',
-            thought: parsed.thinking || parsed.thought || '',
-            blocks: parsed.blocks as ContentBlock[]
-          };
-        }
-
-        // 2. 兼容 Anthropic 标准消息格式 (后端存储的格式)
-        if (Array.isArray(parsed.content)) {
-          const blocks: ContentBlock[] = parsed.content.map((b: any, idx: number) => {
-            if (b.type === 'text') {
-              return { index: idx, type: 'text', content: b.text || '', status: 'completed' };
-            }
-            if (b.type === 'thinking') {
-              return { index: idx, type: 'thinking', content: b.thinking || '', status: 'completed' };
-            }
-            if (b.type === 'tool_use') {
-              return {
-                index: idx,
-                type: 'tool_use',
-                content: b.name || '',
-                toolName: b.name,
-                toolInput: typeof b.input === 'object' ? JSON.stringify(b.input, null, 2) : (b.input || ''),
-                status: 'completed'
-              };
-            }
-            return { index: idx, type: b.type, content: JSON.stringify(b), status: 'completed' };
-          });
-
-          // 提取纯文本用于兜底展示
-          const plainContent = blocks.filter(b => b.type === 'text').map(b => b.content).join('\n');
-          const thought = blocks.filter(b => b.type === 'thinking').map(b => b.content).join('\n');
-
-          return { content: plainContent, thought, blocks };
-        }
-
-        // 3. 兼容 OpenAI 标准消息格式
-        if (parsed.choices && parsed.choices[0]?.message) {
-          const message = parsed.choices[0].message;
-          return {
-            content: message.content || '',
-            thought: message.reasoning_content || '', // 某些模型可能有推理内容
-            blocks: []
-          };
-        }
-
-        // 4. 兼容用户消息或简单格式 { role, content }
-        if (parsed.role && parsed.content) {
-            return { content: typeof parsed.content === 'string' ? parsed.content : JSON.stringify(parsed.content), thought: '', blocks: [] };
-        }
-
-        // 兜底：处理可能是 raw string 的情况
-        const content = parsed.content || parsed.text || (typeof parsed === 'string' ? parsed : '');
-        return { content: typeof content === 'string' ? content : JSON.stringify(content), thought: '', blocks: [] };
-      } catch (e) {
-        return { content: payload, thought: '', blocks: [] };
-      }
-    };
-
-    const allMessages: { 
-      role: string, 
-      content: string, 
-      id: string, 
-      thought?: string, 
-      protocolType?: string, 
-      blocks?: ContentBlock[] 
-    }[] = messages.map(msg => {
-      const { content, thought, blocks } = parsePayload(msg);
-      return {
-        role: msg.role === 'USER' || msg.role === 'user' ? 'local' : 'ai',
-        content,
-        thought,
-        protocolType: msg.protocolType,
-        blocks,
-        id: msg.code
-      };
-    });
-
-    if (streaming) {
-      allMessages.push({ 
-        role: 'ai', 
-        content: currentContent, 
-        id: 'streaming', 
-        protocolType: currentProtocolType,
-        blocks: currentBlocks 
+    if (streaming && currentBlocks.length > 0) {
+      allItems.push({
+        role: 'assistant',
+        blocks: currentBlocks,
+        id: 'streaming',
       });
     }
 
     const blocksToItems = (blocks: ContentBlock[]) => {
-      return blocks.map((block) => {
+      const toolResultMap = new Map<string, ContentBlock>();
+      blocks.filter(b => b.type === 'tool_result' && b.toolUseId).forEach(b => {
+        toolResultMap.set(b.toolUseId!, b);
+      });
+
+      return blocks
+        .filter(b => b.type !== 'tool_result' && b.type !== 'turn_start' && b.type !== 'turn_stop')
+        .map((block) => {
         const isTool = block.type === 'tool_use';
         const isThinking = block.type === 'thinking';
         const isStreaming = block.status === 'streaming';
@@ -499,9 +765,7 @@ export default function ChatPage() {
         let iconCls = 'tc-icon-wrapper';
         let iconEl: React.ReactNode = <CheckCircleOutlined />;
         let title = '回复';
-        let content: React.ReactNode = (
-          <XMarkdown>{block.content}</XMarkdown>
-        );
+        let content: React.ReactNode = <XMarkdown>{block.content}</XMarkdown>;
 
         if (isThinking) {
           iconCls += ' tc-icon-thinking';
@@ -510,24 +774,40 @@ export default function ChatPage() {
           title = '深度思考';
         } else if (isTool) {
           iconCls += ' tc-icon-tool';
-          if (isStreaming) iconCls += ' tc-icon-streaming';
+          const matchedResult = block.toolUseId ? toolResultMap.get(block.toolUseId) : undefined;
+          if (isStreaming || (block.toolUseId && !matchedResult)) iconCls += ' tc-icon-streaming';
           iconEl = <ToolOutlined />;
           title = `调用工具: ${block.toolName || '未知'}`;
           content = (
-            <div style={{
-              backgroundColor: '#fafafa',
-              padding: '12px 16px',
-              borderRadius: '12px',
-              fontSize: '13px',
-              fontFamily: "'Cascadia Code', 'Fira Code', monospace",
-              border: '1px solid #f0f0f0',
-              lineHeight: '1.6',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              color: '#434343'
-            }}>
-              <div style={{ color: '#8c8c8c', marginBottom: 4, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Input Parameters</div>
-              {block.toolInput}
+            <div>
+              <div style={{
+                backgroundColor: '#fafafa', padding: '12px 16px', borderRadius: '12px',
+                fontSize: '13px', fontFamily: "'Cascadia Code', 'Fira Code', monospace",
+                border: '1px solid #f0f0f0', lineHeight: '1.6', whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all', color: '#434343'
+              }}>
+                <div style={{ color: '#8c8c8c', marginBottom: 4, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Input Parameters</div>
+                {block.toolInput}
+              </div>
+              {matchedResult && (
+                <div style={{
+                  marginTop: 8,
+                  backgroundColor: matchedResult.toolResultIsError ? '#fff2f0' : '#f6ffed',
+                  padding: '12px 16px', borderRadius: '12px', fontSize: '13px',
+                  fontFamily: "'Cascadia Code', 'Fira Code', monospace",
+                  border: `1px solid ${matchedResult.toolResultIsError ? '#ffccc7' : '#d9f7be'}`,
+                  lineHeight: '1.6', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: '#434343',
+                  maxHeight: 200, overflow: 'auto',
+                }}>
+                  <div style={{ color: '#8c8c8c', marginBottom: 4, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    {matchedResult.toolResultIsError ? 'Error Output' : 'Output'}
+                  </div>
+                  {matchedResult.toolResultContent}
+                </div>
+              )}
+              {!matchedResult && !isStreaming && block.toolUseId && (
+                <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: '12px' }}>调用中…</div>
+              )}
             </div>
           );
         } else {
@@ -546,84 +826,102 @@ export default function ChatPage() {
       });
     };
 
-    return allMessages.map((msg) => {
-      if (msg.role === 'local') {
+    return allItems.map((item) => {
+      if (item.role === 'user') {
+        const textContent = item.blocks.filter(b => b.type === 'text').map(b => b.content).join('\n');
+        const imageBlocks = item.blocks.filter(b => b.type === 'image');
+        const documentBlocks = item.blocks.filter(b => b.type === 'document');
+        const hasAttachments = imageBlocks.length > 0 || documentBlocks.length > 0;
+
+        const userContent = () => {
+          if (!hasAttachments) {
+            return textContent;
+          }
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+              {textContent && <div style={{ whiteSpace: 'pre-wrap' }}>{textContent}</div>}
+              {imageBlocks.map(b => (
+                <img
+                  key={b.index}
+                  src={b.url}
+                  alt={b.filename || 'image'}
+                  style={{ maxWidth: 280, maxHeight: 200, borderRadius: 12, objectFit: 'cover', cursor: 'pointer' }}
+                  onClick={() => window.open(b.url, '_blank')}
+                />
+              ))}
+              {documentBlocks.map(b => (
+                <a
+                  key={b.index}
+                  href={b.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '8px 14px', borderRadius: 10,
+                    backgroundColor: '#fff', border: '1px solid #e0e0e0',
+                    fontSize: '13px', color: '#333', textDecoration: 'none', maxWidth: 280,
+                  }}
+                >
+                  <span style={{
+                    flexShrink: 0, width: 24, height: 24, borderRadius: 6,
+                    backgroundColor: '#f0f0f0', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', fontSize: '14px'
+                  }}></span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {b.filename || 'document'}
+                  </span>
+                  {b.size != null && (
+                    <span style={{ color: '#999', fontSize: '11px', flexShrink: 0 }}>
+                      {b.size > 1024 * 1024 ? `${(b.size / 1024 / 1024).toFixed(1)}M` : `${(b.size / 1024).toFixed(0)}K`}
+                    </span>
+                  )}
+                </a>
+              ))}
+            </div>
+          );
+        };
+
         return (
           <Bubble
-            key={msg.id}
-            content={msg.content}
+            key={item.id}
+            content={textContent}
+            contentRender={hasAttachments ? userContent : undefined}
             role="user"
             placement="end"
             style={{ maxWidth: '85%', marginBottom: 32 }}
-            styles={{
-              content: {
-                backgroundColor: '#f5f5f5',
-                color: '#000',
-                borderRadius: 16,
-                padding: '12px 18px',
-              }
-            }}
+            styles={{ content: { backgroundColor: '#f5f5f5', color: '#000', borderRadius: 16, padding: '12px 18px' } }}
           />
         );
       }
 
-      // AI Message
-      const isAnthropic = msg.protocolType === 'ANTHROPIC_MESSAGES';
-      
-      if (isAnthropic && msg.blocks && msg.blocks.length > 0) {
+      // Assistant turn — 统一走 block 渲染
+      const items = blocksToItems(item.blocks);
+      if (items.length > 0) {
         return (
-          <div key={msg.id} style={{ marginBottom: 32 }}>
-             <div className="thought-chain-container">
-               <ThoughtChain 
-                  items={blocksToItems(msg.blocks)} 
-                  style={{ width: '100%' }}
-               />
-             </div>
+          <div key={item.id} style={{ marginBottom: 32 }}>
+            <div className="thought-chain-container">
+              <ThoughtChain items={items} style={{ width: '100%' }} />
+            </div>
           </div>
         );
       }
 
-      // Default OpenAI or fallback
-      const getDisplayContent = (content: string, thought?: string) => {
-        if (thought) {
-          return `<think>${thought}</think>${content}`;
-        }
-        return content;
-      };
-
-      const displayContent = msg.id === 'streaming' ? msg.content : getDisplayContent(msg.content, msg.thought);
-
+      const fallbackContent = item.blocks.map(b => b.content).join('\n');
       return (
         <Bubble
-          key={msg.id}
-          content={displayContent}
-          contentRender={(content) => (
-            <XMarkdown
-              components={{
-                think: ({ children }) => (
-                  <Think title="正在思考..." children={children} />
-                )
-              }}
-            >
-              {content}
-            </XMarkdown>
-          )}
+          key={item.id}
+          content={fallbackContent}
+          contentRender={(c) => <XMarkdown>{c}</XMarkdown>}
           role="ai"
           placement="start"
           style={{ maxWidth: '85%', marginBottom: 32 }}
-          styles={{
-            content: {
-              backgroundColor: 'transparent',
-              color: '#000',
-              padding: '4px 0px',
-              fontSize: '15px',
-              lineHeight: '1.6',
-            }
-          }}
+          styles={{ content: { backgroundColor: 'transparent', color: '#000', padding: '4px 0px', fontSize: '15px', lineHeight: '1.6' } }}
         />
       );
     });
   };
+
+
 
   if (agents.length === 0 && !selectedAgent) {
     return (
@@ -760,14 +1058,19 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', position: 'relative' }} onScroll={handleScroll}>
           {loadingMessages && (
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.7)' }}>
               <Spin size="large" />
             </div>
           )}
+          {messageCursorRef.current.loadingMore && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0', color: '#8c8c8c', fontSize: '12px' }}>
+              <Spin size="small" /> 加载更多消息...
+            </div>
+          )}
           <div style={{ padding: '60px 10% 80px', display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-            {messages.length === 0 && !streaming ? (
+            {renderItems.length === 0 && !streaming ? (
               <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <Welcome
                   variant="borderless"
@@ -784,28 +1087,110 @@ export default function ChatPage() {
 
         {/* Input Area */}
         <div style={{ padding: '16px 10% 24px' }}>
-          <div style={{
-            backgroundColor: '#f5f5f5',
-            borderRadius: 24,
-            overflow: 'hidden',
-            padding: '4px 8px'
-          }}>
-            <Sender
-              ref={senderRef}
-              loading={streaming}
-              onSubmit={handleSend}
-              onCancel={() => {
-                if (abortControllerRef.current) {
-                  abortControllerRef.current.abort();
-                  abortControllerRef.current = null;
-                }
-              }}
-              placeholder="Message..."
-              styles={{
-                input: { border: 'none', boxShadow: 'none', backgroundColor: 'transparent' },
-              }}
-            />
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown"
+            style={{ display: 'none' }}
+            onChange={handleFileInputChange}
+          />
+          <Sender
+            ref={senderRef}
+            loading={streaming}
+            onSubmit={handleSend}
+            onCancel={() => {
+              const sessionCode = currentStreamSessionCodeRef.current;
+              if (selectedAgent && sessionCode) {
+                interruptStream(selectedAgent, sessionCode).catch(() => {});
+              }
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+                abortControllerRef.current = null;
+              }
+            }}
+            placeholder="Message..."
+            header={attachments.length > 0 && (
+              <div style={{
+                display: 'flex', gap: 12, marginBottom: 4,
+                overflowX: 'auto', padding: '12px 12px 0',
+                scrollbarWidth: 'none',
+              }}>
+                {attachments.map((att) => {
+                  const isImage = ALLOWED_IMAGE_TYPES.includes(att.file.type);
+                  const hasError = !!att.error;
+                  return (
+                    <Tooltip title={att.error || att.file.name} key={att.uid}>
+                      <div
+                        style={{
+                          position: 'relative', flexShrink: 0, width: 80, height: 80,
+                          borderRadius: 12, overflow: 'hidden',
+                          backgroundColor: '#f5f5f5',
+                          border: `1px solid ${hasError ? '#ff4d4f' : '#f0f0f0'}`,
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        {isImage && att.previewUrl && !hasError ? (
+                          <img
+                            src={att.previewUrl}
+                            alt={att.file.name}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <div style={{
+                            width: '100%', height: '100%',
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center',
+                            color: hasError ? '#ff4d4f' : '#8c8c8c',
+                            gap: 4
+                          }}>
+                            {att.uploading ? (
+                              <Spin size="small" />
+                            ) : (
+                              <>
+                                <div style={{ fontSize: 28 }}>
+                                  {hasError ? '⚠️' : (att.file.type.includes('pdf') ? '📕' : '📄')}
+                                </div>
+                                <div style={{ fontSize: 10, width: '100%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px' }}>
+                                  {att.file.name}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {/* Remove button */}
+                        {!att.uploading && (
+                          <div
+                            onClick={() => removeAttachment(att.uid)}
+                            style={{
+                              position: 'absolute', top: 4, right: 4,
+                              width: 20, height: 20, borderRadius: '50%',
+                              backgroundColor: 'rgba(0,0,0,0.4)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              cursor: 'pointer', color: '#fff', fontSize: 12,
+                              zIndex: 10,
+                              backdropFilter: 'blur(4px)',
+                            }}
+                          >
+                            ×
+                          </div>
+                        )}
+                      </div>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            )}
+            prefix={(
+              <Button
+                type="text"
+                icon={<PaperClipOutlined style={{ fontSize: 20, color: '#8c8c8c' }} />}
+                onClick={handleFileSelect}
+                disabled={streaming || attachments.length >= MAX_ATTACHMENTS}
+                style={{ width: 36, height: 36, borderRadius: '50%' }}
+              />
+            )}
+          />
           <div style={{ textAlign: 'center', marginTop: 12 }}>
             <Text style={{ fontSize: 12, color: '#bfbfbf' }}>AI responses can be inaccurate. Please verify information.</Text>
           </div>
