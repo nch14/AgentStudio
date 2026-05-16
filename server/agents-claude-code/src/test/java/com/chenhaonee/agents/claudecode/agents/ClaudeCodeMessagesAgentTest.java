@@ -1,5 +1,6 @@
 package com.chenhaonee.agents.claudecode.agents;
 
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
 import com.chenhaonee.agents.claudecode.process.ChatProcessSpec;
@@ -23,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -74,7 +76,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, "claude-sonnet", "system prompt")),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(messageStart, deltaEvent, resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(messageStart, deltaEvent, resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -124,7 +126,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, null)),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(errorEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(errorEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -161,7 +163,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, "sys-a\nsys-b")),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("part-1\npart-2")).thenReturn(Flux.just(resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {
@@ -208,7 +210,7 @@ class ClaudeCodeMessagesAgentTest {
                 argThat(spec -> matchesSpec(spec, agentHome, DEFAULT_MODEL, null)),
                 eq(null)
         )).thenReturn(process);
-        when(process.startTurn("hello")).thenReturn(Flux.just(messageStop, resultEvent));
+        when(process.startTurn(any(JSONArray.class))).thenReturn(Flux.just(messageStop, resultEvent));
 
         List<MessagesEvent> events = agent.stream("agent-1", """
                 {

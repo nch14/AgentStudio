@@ -3,9 +3,11 @@ package com.chenhaonee.agents.app.application.conversation;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.app.application.agent.ProviderCapabilityService;
+import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
 import com.chenhaonee.agents.connect.driver.AgentRegistry;
 import com.chenhaonee.agents.connect.spi.core.MessagesAgent;
 import com.chenhaonee.agents.connect.spi.model.MessagesEvent;
+import com.chenhaonee.agents.connect.support.AttachmentResolver;
 import com.chenhaonee.agents.connect.support.MessagesEventBlockRecorderFactory;
 import com.chenhaonee.agents.domain.agent.model.Agent;
 import com.chenhaonee.agents.domain.agent.model.AgentProvider;
@@ -67,6 +69,18 @@ class AnthropicMessagesServiceTest {
 
     @Mock
     private ActiveStreamRegistry activeStreamRegistry;
+
+    @Mock
+    private AttachmentValidator attachmentValidator;
+
+    @Mock
+    private AnthropicContentBlockBuilder anthropicContentBlockBuilder;
+
+    @Mock
+    private AttachmentResolver attachmentResolver;
+
+    @Mock
+    private ClaudeCodeProperties claudeCodeProperties;
 
     @Mock
     private MessagesAgent messagesAgent;
@@ -260,7 +274,7 @@ class AnthropicMessagesServiceTest {
                     {
                       "role": "user",
                       "content": [
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc"}}
+                        {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "abc"}}
                       ]
                     }
                   ]
@@ -276,7 +290,7 @@ class AnthropicMessagesServiceTest {
         );
 
         assertEquals(
-                "anthropic messages currently only support text and tool_result user content blocks",
+                "anthropic messages currently only support text / image / document / tool_result user content blocks",
                 error.getMessage()
         );
     }

@@ -1,6 +1,7 @@
 package com.chenhaonee.agents.claudecode.process;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonEvent;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonParser;
@@ -146,6 +147,19 @@ public class ClaudeCodeProcess {
      * 本轮事件由独立 sink 承载，读到 {@code type=result} 后完成。
      */
     public Flux<StreamJsonEvent> startTurn(String userInput) throws IOException {
+        JSONArray content = new JSONArray();
+        JSONObject textBlock = new JSONObject();
+        textBlock.put("type", "text");
+        textBlock.put("text", userInput);
+        content.add(textBlock);
+        return startTurn(content);
+    }
+
+    /**
+     * 多模态 user content 数组形态。content 元素为 Anthropic 风格的 content block
+     * （text / image / document），由调用方组装并已完成 base64 编码。
+     */
+    public Flux<StreamJsonEvent> startTurn(JSONArray userContent) throws IOException {
         synchronized (turnLock) {
             if (!started || stdinWriter == null) {
                 throw new IllegalStateException("Process not started");
@@ -160,7 +174,7 @@ public class ClaudeCodeProcess {
             ActiveTurn activeTurn = new ActiveTurn(Sinks.many().replay().limit(TURN_EVENT_REPLAY_LIMIT),
                     System.currentTimeMillis());
             activeTurnRef.set(activeTurn);
-            String jsonLine = buildUserMessage(userInput);
+            String jsonLine = buildUserMessage(userContent);
             try {
                 stdinWriter.write(jsonLine);
                 stdinWriter.write("\n");
@@ -380,9 +394,8 @@ public class ClaudeCodeProcess {
     }
 
     /** 构造 stream-json 格式的 user message 行（不含末尾换行）。 */
-    private String buildUserMessage(String userInput) {
-        Map<String, Object> textPart = Map.of("type", "text", "text", userInput);
-        Map<String, Object> message = Map.of("role", "user", "content", List.of(textPart));
+    private String buildUserMessage(JSONArray userContent) {
+        Map<String, Object> message = Map.of("role", "user", "content", userContent);
         Map<String, Object> wrapper = Map.of("type", "user", "message", message);
         return JSON.toJSONString(wrapper);
     }

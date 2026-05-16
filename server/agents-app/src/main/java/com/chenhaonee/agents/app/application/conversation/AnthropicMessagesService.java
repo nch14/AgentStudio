@@ -4,11 +4,14 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.app.application.agent.ProviderCapabilityService;
+import com.chenhaonee.agents.app.interfaces.http.common.dto.AttachmentRequest;
+import com.chenhaonee.agents.claudecode.ClaudeCodeProperties;
 import com.chenhaonee.agents.common.domain.Identity;
 import com.chenhaonee.agents.connect.driver.AgentRegistry;
 import com.chenhaonee.agents.connect.spi.core.MessagesAgent;
 import com.chenhaonee.agents.connect.spi.model.MessagesEvent;
 import com.chenhaonee.agents.connect.support.AgentMessageBlockPayloads;
+import com.chenhaonee.agents.connect.support.AttachmentResolver;
 import com.chenhaonee.agents.connect.support.MessagesEventBlockRecorderFactory;
 import com.chenhaonee.agents.domain.agent.model.Agent;
 import com.chenhaonee.agents.domain.agent.model.AgentProvider;
@@ -39,12 +42,16 @@ import reactor.core.publisher.Flux;
  * <p>把 provider 流式输出经 {@link CancellableStream} 桥接到下游 SSE，
  * 同时由 {@link MessagesEventBlockRecorderFactory} 按 block 边界实时落库；
  * 活跃流注册到 {@link ActiveStreamRegistry} 以支持断线重订阅与主动中断。</p>
+ *
+ * <p>同时提供 {@link #createStreaming(String, String, String, List)} 给产品对话入口
+ * 使用：传入纯文本 + 附件元数据，本服务自行构造 Anthropic 请求 JSON 并下传。</p>
  */
 @Service
 @RequiredArgsConstructor
 public class AnthropicMessagesService {
 
     private static final Logger log = LoggerFactory.getLogger(AnthropicMessagesService.class);
+    private static final int DEFAULT_MAX_TOKENS = 8192;
 
     private final AgentSessionRepository agentSessionRepository;
     private final AgentSessionDomainService agentSessionDomainService;
@@ -54,16 +61,48 @@ public class AnthropicMessagesService {
     private final ProviderCapabilityService providerCapabilityService;
     private final MessagesEventBlockRecorderFactory messagesEventBlockRecorderFactory;
     private final ActiveStreamRegistry activeStreamRegistry;
+    private final AttachmentValidator attachmentValidator;
+    private final AnthropicContentBlockBuilder anthropicContentBlockBuilder;
+    private final AttachmentResolver attachmentResolver;
+    private final ClaudeCodeProperties claudeCodeProperties;
+
+    /**
+     * 产品对话入口：传入纯文本 + 附件，构造 Anthropic 请求 JSON 后走通用 create 路径。
+     */
+    public AnthropicMessagesResult createStreaming(
+            String agentCode,
+            String sessionCode,
+            String content,
+            List<AttachmentRequest> attachments
+    ) {
+        if (StringUtils.isBlank(content)) {
+            throw new IllegalArgumentException("content must not be blank");
+        }
+        Agent agent = agentDomainService.requireEnabledAgent(agentCode);
+        attachmentValidator.validate(agentCode, attachments);
+        String requestJson = buildStreamingRequestJson(agent, content, attachments);
+        return create(agentCode, sessionCode, requestJson, agent, attachments);
+    }
 
     public AnthropicMessagesResult create(String agentCode, String sessionCode, String requestJson) {
         Agent agent = agentDomainService.requireEnabledAgent(agentCode);
+        return create(agentCode, sessionCode, requestJson, agent, List.of());
+    }
+
+    private AnthropicMessagesResult create(
+            String agentCode,
+            String sessionCode,
+            String requestJson,
+            Agent agent,
+            List<AttachmentRequest> attachments
+    ) {
         validateProvider(agent.getProvider());
         validateRequest(requestJson);
         String latestUserText = extractLatestUserText(requestJson);
         AgentSession session = getOrCreateSession(sessionCode, agent.getCode(), latestUserText);
         String turnCode = Identity.newIdentity().value();
         MessageProtocolType protocolType = mapProtocol(agent.getProvider());
-        persistLatestUserTextBlock(session.getCode(), turnCode, latestUserText, protocolType);
+        persistLatestUserMessageBlocks(session.getCode(), turnCode, latestUserText, attachments, protocolType);
 
         AgentProvider providerType = agent.getProvider();
         MessagesAgent messagesAgent = agentRegistry.findMessagesAgent(providerType)
@@ -150,30 +189,94 @@ public class AnthropicMessagesService {
         return agentSessionRepository.save(session);
     }
 
-    private void persistLatestUserTextBlock(
+    /**
+     * 持久化 USER 一组 block：text 写 TEXT block，image/document 写对应 block。
+     * IMAGE / DOCUMENT block 只存 OSS 引用 + 元数据，不写 base64 字节。
+     */
+    private void persistLatestUserMessageBlocks(
             String sessionCode,
             String turnCode,
             String latestUserText,
+            List<AttachmentRequest> attachments,
             MessageProtocolType protocolType
     ) {
-        if (StringUtils.isBlank(latestUserText)) {
+        if (StringUtils.isNotBlank(latestUserText)) {
+            agentSessionDomainService.appendBlock(
+                    sessionCode,
+                    turnCode,
+                    MessageRole.USER,
+                    ContentBlockType.TEXT,
+                    protocolType,
+                    AgentMessageBlockPayloads.text(latestUserText),
+                    null
+            );
+        }
+        if (attachments == null || attachments.isEmpty()) {
             return;
         }
-        agentSessionDomainService.appendBlock(
-                sessionCode,
-                turnCode,
-                MessageRole.USER,
-                ContentBlockType.TEXT,
-                protocolType,
-                AgentMessageBlockPayloads.text(latestUserText),
-                null
-        );
+        for (AttachmentRequest attachment : attachments) {
+            ContentBlockType blockType = isImageMime(attachment.mime()) ? ContentBlockType.IMAGE : ContentBlockType.DOCUMENT;
+            String url = attachmentResolver.publicUrl(attachment.ossKey());
+            String payload = blockType == ContentBlockType.IMAGE
+                    ? AgentMessageBlockPayloads.image(attachment.ossKey(), attachment.mime(), attachment.filename(), attachment.size(), url)
+                    : AgentMessageBlockPayloads.document(attachment.ossKey(), attachment.mime(), attachment.filename(), attachment.size(), url);
+            agentSessionDomainService.appendBlock(
+                    sessionCode,
+                    turnCode,
+                    MessageRole.USER,
+                    blockType,
+                    protocolType,
+                    payload,
+                    null
+            );
+        }
+    }
+
+    private static boolean isImageMime(String mime) {
+        return StringUtils.startsWithIgnoreCase(mime, "image/");
     }
 
     private MessageProtocolType mapProtocol(AgentProvider provider) {
         return switch (provider) {
             case CLAUDE_CODE -> MessageProtocolType.ANTHROPIC_MESSAGES;
         };
+    }
+
+    private String buildStreamingRequestJson(Agent agent, String content, List<AttachmentRequest> attachments) {
+        JSONObject root = new JSONObject();
+        root.put("model", resolveModel(agent));
+        root.put("stream", true);
+        root.put("max_tokens", DEFAULT_MAX_TOKENS);
+        root.put("messages", buildUserMessages(content, attachments));
+        if (attachments != null && !attachments.isEmpty()) {
+            root.put("_attachments", anthropicContentBlockBuilder.buildAttachmentsMeta(attachments));
+        }
+        return JSON.toJSONString(root);
+    }
+
+    private String resolveModel(Agent agent) {
+        Map<String, String> providerConfig = agent.getProviderConfig();
+        String model = providerConfig == null ? null : StringUtils.trimToNull(providerConfig.get("model"));
+        if (agent.getProvider() == AgentProvider.CLAUDE_CODE) {
+            return StringUtils.firstNonBlank(model, claudeCodeProperties.getDefaultModel());
+        }
+        if (model == null) {
+            throw new IllegalArgumentException("agent provider config missing model: " + agent.getCode());
+        }
+        return model;
+    }
+
+    private JSONArray buildUserMessages(String content, List<AttachmentRequest> attachments) {
+        JSONArray messages = new JSONArray();
+        JSONObject userMessage = new JSONObject();
+        userMessage.put("role", "user");
+        if (attachments == null || attachments.isEmpty()) {
+            userMessage.put("content", content);
+        } else {
+            userMessage.put("content", anthropicContentBlockBuilder.buildUserContent(content, attachments));
+        }
+        messages.add(userMessage);
+        return messages;
     }
 
     private boolean isStandardStreamingEvent(MessagesEvent event) {
@@ -240,21 +343,25 @@ public class AnthropicMessagesService {
                 if (block == null) {
                     continue;
                 }
-                if ("text".equals(block.getString("type")) && StringUtils.isNotBlank(block.getString("text"))) {
+                String type = block.getString("type");
+                if ("text".equals(type) && StringUtils.isNotBlank(block.getString("text"))) {
                     if (!builder.isEmpty()) {
                         builder.append('\n');
                     }
                     builder.append(block.getString("text"));
                     continue;
                 }
-                if ("tool_result".equals(block.getString("type")) && StringUtils.isNotBlank(block.getString("content"))) {
+                if ("tool_result".equals(type) && StringUtils.isNotBlank(block.getString("content"))) {
                     if (!builder.isEmpty()) {
                         builder.append('\n');
                     }
                     builder.append(block.getString("content"));
                     continue;
                 }
-                throw new IllegalArgumentException("anthropic messages currently only support text and tool_result user content blocks");
+                if ("image".equals(type) || "document".equals(type)) {
+                    continue;
+                }
+                throw new IllegalArgumentException("anthropic messages currently only support text / image / document / tool_result user content blocks");
             }
             return StringUtils.trimToNull(builder.toString());
         }
