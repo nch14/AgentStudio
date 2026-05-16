@@ -13,6 +13,7 @@ import com.chenhaonee.agents.domain.agent.service.AgentDomainService;
 import com.chenhaonee.agents.domain.session.factory.AgentSessionDomainFactory;
 import com.chenhaonee.agents.domain.session.model.AgentMessage;
 import com.chenhaonee.agents.domain.session.model.AgentSession;
+import com.chenhaonee.agents.domain.session.model.SessionScene;
 import com.chenhaonee.agents.domain.session.repository.AgentSessionRepository;
 import com.chenhaonee.agents.domain.session.service.AgentSessionDomainService;
 import lombok.RequiredArgsConstructor;
@@ -108,7 +109,8 @@ public class AnthropicMessagesService {
                     .orElseThrow(() -> new IllegalArgumentException(
                             "session not found for agent: sessionCode=" + sessionCode + ", agentCode=" + agentCode));
         }
-        AgentSession session = agentSessionDomainFactory.create(StringUtils.left(StringUtils.defaultString(userText), 100), agentCode);
+        AgentSession session = agentSessionDomainFactory.create(
+                StringUtils.left(StringUtils.defaultString(userText), 100), agentCode, SessionScene.CHAT);
         return agentSessionRepository.save(session);
     }
 

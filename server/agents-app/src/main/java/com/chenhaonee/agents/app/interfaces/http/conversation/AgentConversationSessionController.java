@@ -8,6 +8,7 @@ import com.chenhaonee.agents.app.interfaces.http.conversation.dto.AgentSessionMe
 import com.chenhaonee.agents.app.interfaces.http.conversation.dto.RenameAgentSessionRequest;
 import com.chenhaonee.agents.domain.session.model.AgentMessage;
 import com.chenhaonee.agents.domain.session.model.AgentSession;
+import com.chenhaonee.agents.domain.session.model.SessionScene;
 import com.chenhaonee.agents.domain.session.service.AgentSessionDomainService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -42,10 +43,11 @@ public class AgentConversationSessionController {
             @Parameter(description = "Agent 编码") @PathVariable String agentCode,
             @Parameter(description = "页码，从 0 开始") @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "每页数量") @RequestParam(defaultValue = "20") int size,
-            @Parameter(description = "是否只查询归档会话") @RequestParam(defaultValue = "false") boolean archived) {
+            @Parameter(description = "是否只查询归档会话") @RequestParam(defaultValue = "false") boolean archived,
+            @Parameter(description = "场景类型：CHAT / TASK") @RequestParam(defaultValue = "CHAT") SessionScene scene) {
         try {
             return PageResponse.from(
-                    agentSessionDomainService.listSessionsByAgent(page, size, agentCode, archived)
+                    agentSessionDomainService.listSessionsByAgent(page, size, agentCode, archived, scene)
                             .map(this::toSessionResponse));
         } catch (Exception e) {
             return PageResponse.errorPage(ExceptionHandlers.handleException(e));

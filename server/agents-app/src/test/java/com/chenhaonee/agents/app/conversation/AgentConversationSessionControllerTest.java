@@ -14,6 +14,7 @@ import com.chenhaonee.agents.domain.session.model.AgentSession;
 import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
 import com.chenhaonee.agents.domain.session.model.MessageRole;
 import com.chenhaonee.agents.domain.session.model.MessageStatus;
+import com.chenhaonee.agents.domain.session.model.SessionScene;
 import com.chenhaonee.agents.domain.session.service.AgentSessionDomainService;
 import java.time.Instant;
 import java.util.List;
@@ -49,6 +50,7 @@ class AgentConversationSessionControllerTest {
         sampleMessage = new AgentMessage();
         sampleMessage.setCode("msg-001");
         sampleMessage.setSessionCode("session-001");
+        sampleMessage.setTurnCode("turn-001");
         sampleMessage.setRole(MessageRole.ASSISTANT);
         sampleMessage.setProtocolType(MessageProtocolType.ANTHROPIC_MESSAGES);
         sampleMessage.setStatus(MessageStatus.COMPLETED);
@@ -60,7 +62,7 @@ class AgentConversationSessionControllerTest {
     @Test
     void shouldListAgentSessions() throws Exception {
         Page<AgentSession> page = new PageImpl<>(List.of(sampleSession), PageRequest.of(0, 20), 1);
-        when(agentSessionDomainService.listSessionsByAgent(0, 20, "agent-001", false)).thenReturn(page);
+        when(agentSessionDomainService.listSessionsByAgent(0, 20, "agent-001", false, SessionScene.CHAT)).thenReturn(page);
 
         mockMvc.perform(get("/api/v1/agents/{agentCode}/sessions", "agent-001")
                         .param("page", "0")
