@@ -8,9 +8,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.chenhaonee.agents.app.application.conversation.ActiveStreamRegistry;
 import com.chenhaonee.agents.app.interfaces.http.conversation.AgentConversationSessionController;
 import com.chenhaonee.agents.domain.session.model.AgentMessage;
 import com.chenhaonee.agents.domain.session.model.AgentSession;
+import com.chenhaonee.agents.domain.session.model.ContentBlockType;
 import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
 import com.chenhaonee.agents.domain.session.model.MessageRole;
 import com.chenhaonee.agents.domain.session.model.MessageStatus;
@@ -30,9 +32,11 @@ class AgentConversationSessionControllerTest {
 
     private final AgentSessionDomainService agentSessionDomainService =
             org.mockito.Mockito.mock(AgentSessionDomainService.class);
+    private final ActiveStreamRegistry activeStreamRegistry =
+            org.mockito.Mockito.mock(ActiveStreamRegistry.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final MockMvc mockMvc = MockMvcBuilders.standaloneSetup(
-            new AgentConversationSessionController(agentSessionDomainService)).build();
+            new AgentConversationSessionController(agentSessionDomainService, activeStreamRegistry)).build();
 
     private AgentSession sampleSession;
     private AgentMessage sampleMessage;
@@ -43,6 +47,7 @@ class AgentConversationSessionControllerTest {
         sampleSession.setCode("session-001");
         sampleSession.setAgentCode("agent-001");
         sampleSession.setTitle("今日摘要");
+        sampleSession.setScene(SessionScene.CHAT);
         sampleSession.setMessageCount(3);
         sampleSession.setArchived(false);
         sampleSession.setLastMessageTime(Instant.parse("2026-04-21T15:00:00Z"));
@@ -52,9 +57,10 @@ class AgentConversationSessionControllerTest {
         sampleMessage.setSessionCode("session-001");
         sampleMessage.setTurnCode("turn-001");
         sampleMessage.setRole(MessageRole.ASSISTANT);
+        sampleMessage.setContentBlockType(ContentBlockType.TEXT);
         sampleMessage.setProtocolType(MessageProtocolType.ANTHROPIC_MESSAGES);
         sampleMessage.setStatus(MessageStatus.COMPLETED);
-        sampleMessage.setPayloadJson("{\"id\":\"msg_1\",\"type\":\"message\"}");
+        sampleMessage.setPayloadJson("{\"text\":\"hello\"}");
         sampleMessage.setExternalMessageId("msg_1");
         sampleMessage.assignMessageIndex(2);
     }
@@ -71,22 +77,28 @@ class AgentConversationSessionControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.data[0].code").value("session-001"))
-                .andExpect(jsonPath("$.data[0].title").value("今日摘要"));
+                .andExpect(jsonPath("$.data[0].title").value("今日摘要"))
+                .andExpect(jsonPath("$.data[0].scene").value("CHAT"));
     }
 
     @Test
-    void shouldReturnSessionMessagesWithProtocolMetadata() throws Exception {
-        Page<AgentMessage> page = new PageImpl<>(List.of(sampleMessage), PageRequest.of(0, 50), 1);
-        when(agentSessionDomainService.listMessages("agent-001", "session-001", PageRequest.of(0, 50))).thenReturn(page);
+    void shouldReturnSessionMessagesAsTurnAggregated() throws Exception {
+        AgentSessionDomainService.MessageTurn turn = new AgentSessionDomainService.MessageTurn(
+                "turn-001", List.of(sampleMessage));
+        Page<AgentSessionDomainService.MessageTurn> page = new PageImpl<>(
+                List.of(turn), PageRequest.of(0, 50), 1);
+        when(agentSessionDomainService.listMessageTurns("agent-001", "session-001", PageRequest.of(0, 50)))
+                .thenReturn(page);
 
         mockMvc.perform(get("/api/v1/agents/{agentCode}/sessions/{sessionCode}/messages", "agent-001", "session-001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data[0].code").value("msg-001"))
-                .andExpect(jsonPath("$.data[0].role").value("ASSISTANT"))
-                .andExpect(jsonPath("$.data[0].protocolType").value("ANTHROPIC_MESSAGES"))
-                .andExpect(jsonPath("$.data[0].status").value("COMPLETED"))
-                .andExpect(jsonPath("$.data[0].externalMessageId").value("msg_1"));
+                .andExpect(jsonPath("$.data[0].turnCode").value("turn-001"))
+                .andExpect(jsonPath("$.data[0].blocks[0].code").value("msg-001"))
+                .andExpect(jsonPath("$.data[0].blocks[0].role").value("ASSISTANT"))
+                .andExpect(jsonPath("$.data[0].blocks[0].type").value("TEXT"))
+                .andExpect(jsonPath("$.data[0].blocks[0].payload.text").value("hello"))
+                .andExpect(jsonPath("$.data[0].blocks[0].externalMessageId").value("msg_1"));
     }
 
     @Test

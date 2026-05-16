@@ -2,8 +2,8 @@ package com.chenhaonee.agents.app.interfaces.http.conversation;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.chenhaonee.agents.app.application.conversation.AgentConversationFacade;
-import com.chenhaonee.agents.app.application.conversation.AgentConversationFacade.StreamingConversationResult;
+import com.chenhaonee.agents.app.application.conversation.AnthropicMessagesService;
+import com.chenhaonee.agents.app.application.conversation.AnthropicMessagesService.AnthropicMessagesResult;
 import com.chenhaonee.agents.app.interfaces.http.conversation.dto.AgentUserMessageRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,9 +31,9 @@ import reactor.core.publisher.Flux;
 @RequiredArgsConstructor
 public class AgentConversationMessageController {
 
-    private final AgentConversationFacade agentConversationFacade;
+    private final AnthropicMessagesService anthropicMessagesService;
 
-    @Operation(summary = "发送一条用户消息")
+    @Operation(summary = "发送一条用户消息（含可选附件）")
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<Flux<ServerSentEvent<String>>> create(
             @Parameter(description = "Agent 编码") @PathVariable String agentCode,
@@ -41,10 +41,15 @@ public class AgentConversationMessageController {
             @RequestBody AgentUserMessageRequest request
     ) {
         try {
-            StreamingConversationResult result = agentConversationFacade.sendMessage(agentCode, sessionCode, request.content());
-            return withCommonHeaders(ResponseEntity.ok(), agentCode, result.sessionCode(), result.protocolType())
+            AnthropicMessagesResult result = anthropicMessagesService.createStreaming(
+                    agentCode, sessionCode, request.content(), request.attachments());
+            Flux<ServerSentEvent<String>> events = result.events();
+            if (events == null) {
+                throw new IllegalStateException("streaming events missing");
+            }
+            return withCommonHeaders(ResponseEntity.ok(), agentCode, result.sessionCode())
                     .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .body(result.events());
+                    .body(events);
         } catch (IllegalArgumentException e) {
             return buildSseError(HttpStatus.BAD_REQUEST, agentCode, sessionCode, e.getMessage());
         } catch (IllegalStateException e) {
@@ -65,7 +70,7 @@ public class AgentConversationMessageController {
                 .event("error")
                 .data(JSON.toJSONString(error))
                 .build());
-        return withCommonHeaders(ResponseEntity.status(status), agentCode, sessionCode, null)
+        return withCommonHeaders(ResponseEntity.status(status), agentCode, sessionCode)
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .body(eventFlux);
     }
@@ -73,15 +78,11 @@ public class AgentConversationMessageController {
     private ResponseEntity.BodyBuilder withCommonHeaders(
             ResponseEntity.BodyBuilder builder,
             String agentCode,
-            String sessionCode,
-            String protocolType
+            String sessionCode
     ) {
         builder.header("X-Agent-Code", agentCode);
         if (StringUtils.isNotBlank(sessionCode)) {
             builder.header("X-Agent-Session-Code", sessionCode);
-        }
-        if (StringUtils.isNotBlank(protocolType)) {
-            builder.header("X-Agent-Protocol", protocolType);
         }
         return builder;
     }

@@ -69,3 +69,14 @@ export async function deleteAgent(agentCode: string, options?: { [key: string]: 
   });
 }
 
+/**
+ * 获取可 Chat 的 Agent 列表（开源版仅按 enabled 过滤；保留接口签名以兼容 chat 页面调用）。
+ */
+export async function listChatAgents(options?: { [key: string]: any }) {
+  return request<{ data: AgentDetailResponse[]; total: number }>(BASE_URL, {
+    method: 'GET',
+    params: { status: 'ENABLED', size: 200 },
+    ...(options || {}),
+  });
+}
+
