@@ -1,47 +1,29 @@
 import { request } from '@umijs/max';
-import type { NotifyConfigDto, NotifyConfigCreateRequest, NotifyConfigUpdateRequest, NotifyConfigPageResponse } from './typings';
+import type { NotifyConfigItem, NotifyConfigUpdateRequest } from './typings';
 
 const BASE_URL = '/api/v1/notify-configs';
 
-/** 分页查询通知配置列表 */
-export async function listNotifyConfigs(params?: { page?: number; size?: number }, options?: { [key: string]: any }) {
-  return request<NotifyConfigPageResponse>(BASE_URL, {
-    method: 'GET',
-    params: { page: params?.page ?? 0, size: params?.size ?? 20 },
-    ...(options || {}),
-  });
-}
-
-/** 查询通知配置详情 */
-export async function getNotifyConfig(configCode: string, options?: { [key: string]: any }) {
-  return request<{ data: NotifyConfigDto }>(`${BASE_URL}/${configCode}`, {
+/** 查询所有事件配置列表，按分组排序 */
+export async function listNotifyConfigs(options?: { [key: string]: any }) {
+  return request<{ data: NotifyConfigItem[] }>(BASE_URL, {
     method: 'GET',
     ...(options || {}),
   });
 }
 
-/** 创建通知配置 */
-export async function createNotifyConfig(data: NotifyConfigCreateRequest, options?: { [key: string]: any }) {
-  return request<{ data: NotifyConfigDto }>(BASE_URL, {
-    method: 'POST',
-    data,
+/** 查询指定事件的配置详情 */
+export async function getNotifyConfig(eventCode: string, options?: { [key: string]: any }) {
+  return request<{ data: NotifyConfigItem }>(`${BASE_URL}/${eventCode}`, {
+    method: 'GET',
     ...(options || {}),
   });
 }
 
-/** 更新通知配置 */
-export async function updateNotifyConfig(configCode: string, data: NotifyConfigUpdateRequest, options?: { [key: string]: any }) {
-  return request<{ data: NotifyConfigDto }>(`${BASE_URL}/${configCode}`, {
+/** 更新事件通知配置 */
+export async function updateNotifyConfig(eventCode: string, data: NotifyConfigUpdateRequest, options?: { [key: string]: any }) {
+  return request<{ data: NotifyConfigItem }>(`${BASE_URL}/${eventCode}`, {
     method: 'PUT',
     data,
-    ...(options || {}),
-  });
-}
-
-/** 删除通知配置 */
-export async function deleteNotifyConfig(configCode: string, options?: { [key: string]: any }) {
-  return request(`${BASE_URL}/${configCode}`, {
-    method: 'DELETE',
     ...(options || {}),
   });
 }

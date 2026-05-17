@@ -4,6 +4,8 @@ import com.chenhaonee.agents.common.notify.NotificationChannel;
 import com.chenhaonee.agents.common.notify.Notifier;
 import com.chenhaonee.agents.domain.notify.model.Notification;
 import com.chenhaonee.agents.domain.notify.model.Notification.NotificationStatus;
+import com.chenhaonee.agents.domain.notify.model.NotificationEvent;
+import com.chenhaonee.agents.domain.notify.model.NotificationTemplate;
 import com.chenhaonee.agents.domain.notify.model.NotifyConfig;
 import com.chenhaonee.agents.domain.notify.model.NotifyConfig.DeliveryMode;
 import com.chenhaonee.agents.domain.notify.repository.NotificationRepository;
@@ -86,6 +88,81 @@ public class MessageCenter {
             sendImmediately(channels, profile, subject, content, configCode);
         } else {
             enqueue(channels, profile, subject, content, configCode);
+        }
+    }
+
+    /**
+     * 发送通知（事件化入口）。根据通知事件查找 NotifyConfig，自动解析渠道和接收人。
+     * INSTANT 模式立即发送；MERGED 模式创建 PENDING 记录，由 NotifyScheduler 捞取发送。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void send(NotificationEvent event, Map<String, String> variables) {
+        if (event == null) {
+            throw new IllegalArgumentException("通知事件不能为空");
+        }
+        Map<String, String> renderVariables = variables == null ? Map.of() : variables;
+
+        NotifyConfig config = notifyConfigRepository.findByEventAndValidTrue(event).orElse(null);
+        if (config == null) {
+            log.info("Skip sending notification because notify config was not found, eventCode={}", event.code());
+            return;
+        }
+        if (!config.enabled()) {
+            log.info("Skip sending notification because notify config is disabled, eventCode={}", event.code());
+            return;
+        }
+
+        OwnerProfile profile = ownerProfileDomainService.requireCurrent();
+        List<NotificationChannel> channels = resolveChannels(config, profile);
+
+        if (channels.isEmpty()) {
+            return;
+        }
+
+        DeliveryMode deliveryMode = config.getDeliveryMode() == null ? DeliveryMode.MERGED : config.getDeliveryMode();
+        if (deliveryMode == DeliveryMode.INSTANT) {
+            sendImmediately(event, channels, profile, renderVariables);
+        } else {
+            enqueue(event, channels, profile, renderVariables);
+        }
+    }
+
+    /**
+     * 立即发送模式（事件化）：对每个配置的渠道直接发送通知。
+     */
+    private void sendImmediately(NotificationEvent event, List<NotificationChannel> channels,
+                                 OwnerProfile profile, Map<String, String> variables) {
+        for (NotificationChannel channel : channels) {
+            String recipient = resolveRecipient(channel, profile);
+            if (recipient == null) {
+                continue;
+            }
+            NotificationTemplate.RenderedNotification notification =
+                    NotificationTemplate.render(event, channel, variables);
+            doSendEvent(channel, recipient, notification.subject(), notification.content(), event.code());
+        }
+    }
+
+    /**
+     * 合并模式（事件化）：创建 PENDING 记录，等 NotifyScheduler 捞取发送。
+     */
+    private void enqueue(NotificationEvent event, List<NotificationChannel> channels,
+                         OwnerProfile profile, Map<String, String> variables) {
+        for (NotificationChannel channel : channels) {
+            String recipient = resolveRecipient(channel, profile);
+            if (recipient == null) {
+                continue;
+            }
+            NotificationTemplate.RenderedNotification renderedNotification =
+                    NotificationTemplate.render(event, channel, variables);
+            Notification notification = new Notification();
+            notification.setEventCode(event.code());
+            notification.setChannel(channel);
+            notification.setRecipient(recipient);
+            notification.setSubject(renderedNotification.subject());
+            notification.setContent(renderedNotification.content());
+            notification.setStatus(NotificationStatus.PENDING);
+            notificationRepository.save(notification);
         }
     }
 
@@ -175,7 +252,8 @@ public class MessageCenter {
             return Arrays.stream(config.getChannels().split(","))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
-                    .map(NotificationChannel::valueOf)
+                    .map(this::parseChannel)
+                    .filter(channel -> channel != null)
                     .toList();
         }
 
@@ -188,6 +266,46 @@ public class MessageCenter {
             channels.add(NotificationChannel.EMAIL);
         }
         return channels;
+    }
+
+    private NotificationChannel parseChannel(String channelName) {
+        try {
+            return NotificationChannel.valueOf(channelName);
+        } catch (IllegalArgumentException e) {
+            log.warn("Skip invalid notification channel in config, channel={}", channelName);
+            return null;
+        }
+    }
+
+    private Notification doSendEvent(NotificationChannel channel, String recipient,
+                                     String subject, String content, String eventCode) {
+        Notification notification = new Notification();
+        notification.setEventCode(eventCode);
+        notification.setChannel(channel);
+        notification.setRecipient(recipient);
+        notification.setSubject(subject);
+        notification.setContent(content);
+        notification.setStatus(NotificationStatus.PENDING);
+        notification = notificationRepository.save(notification);
+
+        Notifier notifier = getNotifier(channel);
+        if (notifier == null) {
+            log.error("No notifier available for channel={}, registeredChannels={}",
+                    channel, getRegisteredNotifierChannels());
+            notification.markFailed("no notifier available for channel: " + channel);
+            return notificationRepository.save(notification);
+        }
+
+        try {
+            log.info("Sending notification via notifier, channel={}, notifierType={}, eventCode={}",
+                    channel, notifier.getClass().getSimpleName(), eventCode);
+            notifier.send(recipient, subject, content);
+            notification.markSent();
+        } catch (Exception e) {
+            notification.markFailed(e.getMessage());
+        }
+
+        return notificationRepository.save(notification);
     }
 
     /**

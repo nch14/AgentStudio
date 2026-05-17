@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Form, Input, Button, message, Spin, Select, Modal, Radio,
-  Tag, Popconfirm, Typography,
+  Tag, Popconfirm, Typography, Switch, Divider,
 } from 'antd';
 import {
   UserOutlined,
   BellOutlined,
-  PlusOutlined,
   LockOutlined,
 } from '@ant-design/icons';
 import { rotateToken } from '@/services/auth/AuthController';
@@ -15,11 +14,9 @@ import { getProfile, createProfile, updateProfile } from '@/services/profile/Pro
 import type { ProfileDto, CreateProfileRequest, UpdateProfileRequest } from '@/services/profile/typings';
 import {
   listNotifyConfigs,
-  createNotifyConfig,
   updateNotifyConfig,
-  deleteNotifyConfig,
 } from '@/services/notifyConfig/NotifyConfigController';
-import type { NotifyConfigDto, NotifyConfigCreateRequest, NotifyConfigUpdateRequest } from '@/services/notifyConfig/typings';
+import type { NotifyConfigItem, NotifyConfigUpdateRequest } from '@/services/notifyConfig/typings';
 import styles from './index.less';
 
 const { TextArea } = Input;
@@ -145,108 +142,148 @@ function ProfileTab() {
   );
 }
 
-function NotifyConfigItem({
+/** 单个事件配置行 */
+function EventConfigRow({
   config,
   onUpdate,
-  onDelete,
 }: {
-  config: NotifyConfigDto;
-  onUpdate: (configCode: string, data: NotifyConfigUpdateRequest) => void;
-  onDelete: (configCode: string) => void;
+  config: NotifyConfigItem;
+  onUpdate: (eventCode: string, data: NotifyConfigUpdateRequest) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [deliveryMode, setDeliveryMode] = useState(config.deliveryMode);
-  const [channels, setChannels] = useState<string[]>(config.channels ? config.channels.split(',').filter(Boolean) : []);
-  const [saving, setSaving] = useState(false);
+  const [deliveryMode, setDeliveryMode] = useState<'INSTANT' | 'MERGED'>(config.deliveryMode as 'INSTANT' | 'MERGED');
+  const [channels, setChannels] = useState<string[]>(config.channels || []);
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await onUpdate(config.configCode, {
-        deliveryMode,
-        channels: channels.join(','),
-      });
-      setEditing(false);
-    } finally {
-      setSaving(false);
-    }
+  const handleToggleEnabled = async () => {
+    await onUpdate(config.eventCode, { enabled: !config.enabled });
   };
 
-  const channelOptions = [
-    { label: 'Bark', value: 'BARK' },
-    { label: 'Email', value: 'EMAIL' },
+  const handleDeliveryModeChange = async (value: 'INSTANT' | 'MERGED') => {
+    setDeliveryMode(value);
+    await onUpdate(config.eventCode, { deliveryMode: value });
+  };
+
+  const handleChannelsChange = async (value: string[]) => {
+    setChannels(value);
+    await onUpdate(config.eventCode, { channels: value });
+  };
+
+  const channelPills = [
+    { value: 'BARK', label: 'Bark' },
+    { value: 'EMAIL', label: 'Email' },
   ];
 
   return (
     <div className={styles.configCard}>
-      <div className={styles.configMain}>
-        <div className={styles.configTitleLine}>
-          <span className={styles.configName}>{config.name}</span>
-          <code className={styles.configCode}>{config.configCode}</code>
+      <div className={styles.eventRow}>
+        <div className={styles.eventInfo}>
+          <div className={styles.eventNameLine}>
+            <span className={styles.eventName}>{config.eventName}</span>
+            <Tag color={config.groupCode === 'coordination' ? 'purple' : 'blue'} bordered={false}>
+              {config.groupName}
+            </Tag>
+          </div>
+          <span className={styles.eventDesc}>{config.description}</span>
         </div>
-        <div className={styles.configMetaLine}>
-          <Tag color={config.deliveryMode === 'INSTANT' ? 'blue' : 'orange'} bordered={false} className={styles.configTag}>
-            {config.deliveryMode === 'INSTANT' ? '立即发送' : '合并定时发送'}
-          </Tag>
-          <div className={styles.configChannels}>
-            {config.channels
-              ? config.channels.split(',').map((ch) => (
-                  <Tag key={ch} bordered={false} className={styles.channelTag}>
-                    {ch}
-                  </Tag>
-                ))
-              : <span className={styles.noChannels}>未配置渠道</span>}
+
+        <div className={styles.eventControls}>
+          {/* 启用/禁用开关 */}
+          <div className={styles.controlItem}>
+            <span className={styles.controlLabel}>启用</span>
+            <Switch size="small" checked={config.enabled} onChange={handleToggleEnabled} />
+          </div>
+
+          {/* 渠道选择 pill */}
+          <div className={styles.controlItem}>
+            <span className={styles.controlLabel}>渠道</span>
+            <div className={styles.channelPills}>
+              {channelPills.map((pill) => {
+                const active = channels.includes(pill.value);
+                return (
+                  <span
+                    key={pill.value}
+                    className={`${styles.channelPill} ${active ? styles.channelPillActive : ''}`}
+                    onClick={() => {
+                      const next = active
+                        ? channels.filter((c) => c !== pill.value)
+                        : [...channels, pill.value];
+                      handleChannelsChange(next);
+                    }}
+                  >
+                    {pill.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 投递模式 */}
+          <div className={styles.controlItem}>
+            <span className={styles.controlLabel}>投递</span>
+            <Select
+              size="small"
+              value={deliveryMode}
+              onChange={handleDeliveryModeChange}
+              style={{ width: 110 }}
+              options={[
+                { label: '立即发送', value: 'INSTANT' },
+                { label: '合并定时发送', value: 'MERGED' },
+              ]}
+            />
           </div>
         </div>
       </div>
-      <div className={styles.configActions}>
-        <Button size="small" type="text" onClick={() => setEditing(true)}>编辑</Button>
-        <Popconfirm title="确定删除此配置？" onConfirm={() => onDelete(config.configCode)} okText="确定" cancelText="取消">
-          <Button size="small" type="text" danger>删除</Button>
-        </Popconfirm>
-      </div>
+    </div>
+  );
+}
 
-      <Modal
-        title={`编辑通知配置: ${config.name}`}
-        open={editing}
-        onCancel={() => setEditing(false)}
-        okText="保存"
-        cancelText="取消"
-        onOk={handleSave}
-        confirmLoading={saving}
-      >
-        <Form layout="vertical">
-          <Form.Item label="投递模式">
-            <Radio.Group value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value)}>
-              <Radio value="INSTANT">立即发送</Radio>
-              <Radio value="MERGED">合并定时发送</Radio>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item label="通知渠道">
-            <Select
-              mode="multiple"
-              value={channels}
-              onChange={setChannels}
-              options={channelOptions}
-              placeholder="选择通知渠道"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+/** 按分组展示事件配置 */
+function NotifyGroup({
+  groupCode,
+  groupName,
+  configs,
+  onUpdate,
+}: {
+  groupCode: string;
+  groupName: string;
+  configs: NotifyConfigItem[];
+  onUpdate: (eventCode: string, data: NotifyConfigUpdateRequest) => void;
+}) {
+  const allEnabled = configs.length > 0 && configs.every((c) => c.enabled);
+  const anyEnabled = configs.some((c) => c.enabled);
+
+  const handleToggleGroup = async () => {
+    const targetEnabled = !allEnabled;
+    for (const config of configs) {
+      await onUpdate(config.eventCode, { enabled: targetEnabled });
+    }
+  };
+
+  return (
+    <div className={styles.notifyGroup}>
+      <div className={styles.groupHeader}>
+        <Tag color={groupCode === 'coordination' ? 'purple' : 'blue'} bordered={false}>
+          {groupName}
+        </Tag>
+        <span className={styles.groupToggle}>
+          <span className={styles.controlLabel}>批量启用</span>
+          <Switch size="small" checked={allEnabled} onChange={handleToggleGroup} />
+        </span>
+      </div>
+      <Divider style={{ margin: '8px 0' }} />
+      {configs.map((config) => (
+        <EventConfigRow key={config.eventCode} config={config} onUpdate={onUpdate} />
+      ))}
     </div>
   );
 }
 
 function NotifyTab() {
-  const [configs, setConfigs] = useState<NotifyConfigDto[]>([]);
+  const [configs, setConfigs] = useState<NotifyConfigItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [createModal, setCreateModal] = useState(false);
-  const [createForm] = Form.useForm();
-  const [creating, setCreating] = useState(false);
 
   const fetchConfigs = useCallback(async () => {
     try {
-      const res = await listNotifyConfigs({ page: 0, size: 50 });
+      const res = await listNotifyConfigs();
       setConfigs(res.data || []);
     } catch {
       // handled by interceptor
@@ -259,34 +296,13 @@ function NotifyTab() {
     fetchConfigs();
   }, []);
 
-  const handleCreate = async () => {
-    const values = await createForm.validateFields();
-    setCreating(true);
+  const handleUpdate = async (eventCode: string, data: NotifyConfigUpdateRequest) => {
     try {
-      await createNotifyConfig({
-        name: values.name,
-        deliveryMode: values.deliveryMode || 'INSTANT',
-        channels: (values.channels || []).join(','),
-      });
-      message.success('创建成功');
-      setCreateModal(false);
-      createForm.resetFields();
+      await updateNotifyConfig(eventCode, data);
       fetchConfigs();
-    } finally {
-      setCreating(false);
+    } catch {
+      // handled by interceptor
     }
-  };
-
-  const handleUpdate = async (configCode: string, data: NotifyConfigUpdateRequest) => {
-    await updateNotifyConfig(configCode, data);
-    message.success('更新成功');
-    fetchConfigs();
-  };
-
-  const handleDelete = async (configCode: string) => {
-    await deleteNotifyConfig(configCode);
-    message.success('已删除');
-    fetchConfigs();
   };
 
   if (loading) {
@@ -297,66 +313,38 @@ function NotifyTab() {
     );
   }
 
+  // 按分组聚合
+  const groups = new Map<string, NotifyConfigItem[]>();
+  for (const config of configs) {
+    const list = groups.get(config.groupCode) || [];
+    list.push(config);
+    groups.set(config.groupCode, list);
+  }
+
   return (
     <div className={styles.tabContent}>
       <div className={styles.tabHeader}>
-        <div className={styles.tabHeaderMain}>
-          <h3>通知配置</h3>
-          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => setCreateModal(true)}>
-            新建配置
-          </Button>
-        </div>
-        <p className={styles.tabHeaderDesc}>管理不同场景下的通知投递策略</p>
+        <h3>通知配置</h3>
+        <p className={styles.tabHeaderDesc}>按事件管理通知的启用状态、推送渠道和投递策略</p>
       </div>
 
       {configs.length === 0 ? (
         <div className={styles.emptyState}>
-          <p>暂无通知配置</p>
+          <p>暂无通知事件配置，请确认服务端已初始化</p>
         </div>
       ) : (
-        <div className={styles.configList}>
-          {configs.map((config) => (
-            <NotifyConfigItem
-              key={config.configCode}
-              config={config}
+        <div>
+          {Array.from(groups.entries()).map(([groupCode, groupConfigs]) => (
+            <NotifyGroup
+              key={groupCode}
+              groupCode={groupCode}
+              groupName={groupConfigs[0].groupName}
+              configs={groupConfigs}
               onUpdate={handleUpdate}
-              onDelete={handleDelete}
             />
           ))}
         </div>
       )}
-
-      <Modal
-        title="新建通知配置"
-        open={createModal}
-        onCancel={() => setCreateModal(false)}
-        okText="创建"
-        cancelText="取消"
-        onOk={handleCreate}
-        confirmLoading={creating}
-      >
-        <Form form={createForm} layout="vertical">
-          <Form.Item name="name" label="配置名称" rules={[{ required: true, message: '请输入配置名称' }]}>
-            <Input placeholder="例如：任务完成通知" />
-          </Form.Item>
-          <Form.Item name="deliveryMode" label="投递模式" initialValue="INSTANT">
-            <Radio.Group>
-              <Radio value="INSTANT">立即发送</Radio>
-              <Radio value="MERGED">合并定时发送</Radio>
-            </Radio.Group>
-          </Form.Item>
-          <Form.Item name="channels" label="通知渠道">
-            <Select
-              mode="multiple"
-              options={[
-                { label: 'Bark', value: 'BARK' },
-                { label: 'Email', value: 'EMAIL' },
-              ]}
-              placeholder="选择通知渠道"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }

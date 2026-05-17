@@ -42,6 +42,10 @@ public class Task extends BaseEntity {
     @Column(length = 128)
     private String currentTurnCode;
 
+    /** 关联的 AgentSession.code，首次执行时设置 */
+    @Column(length = 128)
+    private String sessionCode;
+
     private Instant finishedAt;
 
     @Column(columnDefinition = "TEXT")

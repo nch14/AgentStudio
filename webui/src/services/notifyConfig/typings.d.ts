@@ -1,29 +1,19 @@
 /** NotifyConfig 模块类型定义 */
 
-export interface NotifyConfigDto {
-  configCode: string;
-  name: string;
+export interface NotifyConfigItem {
+  groupCode: string;
+  groupName: string;
+  eventCode: string;
+  eventName: string;
+  description: string;
+  enabled: boolean;
   deliveryMode: 'INSTANT' | 'MERGED';
-  channels: string;
-  createTime: string;
-  updateTime: string;
-}
-
-export interface NotifyConfigCreateRequest {
-  name: string;
-  deliveryMode: 'INSTANT' | 'MERGED';
-  channels: string;
+  channels: string[];
+  configured: boolean;
 }
 
 export interface NotifyConfigUpdateRequest {
-  name?: string;
+  enabled?: boolean;
   deliveryMode?: 'INSTANT' | 'MERGED';
-  channels?: string;
-}
-
-export interface NotifyConfigPageResponse {
-  data: NotifyConfigDto[];
-  total: number;
-  page: number;
-  size: number;
+  channels?: string[];
 }

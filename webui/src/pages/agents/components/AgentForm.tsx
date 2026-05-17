@@ -73,7 +73,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ form, mode, descriptors, initialV
         </Form.Item>
       </ConfigProvider>
 
-      <Divider orientation="left" plain>
+      <Divider titlePlacement="left" plain>
         <Space>
           <SettingOutlined />
           <Text type="secondary" style={{ fontSize: 13 }}>实现配置</Text>

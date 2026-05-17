@@ -11,6 +11,7 @@ import com.chenhaonee.agents.AgentsApplication;
 import com.chenhaonee.agents.common.notify.NotificationChannel;
 import com.chenhaonee.agents.domain.notify.model.Notification;
 import com.chenhaonee.agents.domain.notify.model.Notification.NotificationStatus;
+import com.chenhaonee.agents.domain.notify.model.NotificationEvent;
 import com.chenhaonee.agents.domain.notify.model.NotifyConfig;
 import com.chenhaonee.agents.domain.notify.repository.NotificationRepository;
 import com.chenhaonee.agents.domain.notify.repository.NotifyConfigRepository;
@@ -61,8 +62,8 @@ class NotificationControllerIntegrationTest {
         ownerProfileRepository.save(ownerProfile);
 
         NotifyConfig notifyConfig = new NotifyConfig();
-        notifyConfig.setCode("bark_debug");
-        notifyConfig.setName("Bark 调试");
+        notifyConfig.bindEvent(NotificationEvent.QUESTIONS_RAISED);
+        notifyConfig.setEnabled(true);
         notifyConfig.setDeliveryMode(NotifyConfig.DeliveryMode.INSTANT);
         notifyConfig.setChannels("BARK");
         notifyConfigRepository.save(notifyConfig);
@@ -74,9 +75,12 @@ class NotificationControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "configCode": "bark_debug",
-                                  "subject": "本地调试主题",
-                                  "content": "本地调试内容"
+                                  "eventCode": "questions_raised",
+                                  "variables": {
+                                    "taskTitle": "本地调试任务",
+                                    "turnNo": "1",
+                                    "questionCount": "1"
+                                  }
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -86,7 +90,7 @@ class NotificationControllerIntegrationTest {
         assertEquals(1, notifications.size());
 
         Notification notification = notifications.getFirst();
-        assertEquals("bark_debug", notification.getConfigCode());
+        assertEquals("questions_raised", notification.getEventCode());
         assertEquals(NotificationChannel.BARK, notification.getChannel());
         assertEquals(NotificationStatus.FAILED, notification.getStatus());
         assertNotNull(notification.getErrorMessage());

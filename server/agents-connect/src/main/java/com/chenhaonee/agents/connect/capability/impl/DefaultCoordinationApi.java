@@ -7,14 +7,17 @@ import com.chenhaonee.agents.domain.coordination.model.Question;
 import com.chenhaonee.agents.domain.coordination.model.Questions;
 import com.chenhaonee.agents.domain.coordination.service.InstructionDomainService;
 import com.chenhaonee.agents.domain.coordination.service.QuestionsDomainService;
+import com.chenhaonee.agents.domain.notify.model.NotificationEvent;
 import com.chenhaonee.agents.domain.notify.service.MessageCenter;
+import com.chenhaonee.agents.domain.task.model.Task;
 import com.chenhaonee.agents.domain.task.model.TaskTurn;
+import com.chenhaonee.agents.domain.task.service.TaskDomainService;
 import com.chenhaonee.agents.domain.task.service.TaskTurnDomainService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -27,10 +30,8 @@ public class DefaultCoordinationApi implements CoordinationApi {
     private final QuestionsDomainService questionsDomainService;
     private final InstructionDomainService instructionDomainService;
     private final TaskTurnDomainService taskTurnDomainService;
+    private final TaskDomainService taskDomainService;
     private final MessageCenter messageCenter;
-
-    @Value("${app.notify.config-code.questions-raised:questions_raised}")
-    private String questionsRaisedConfigCode;
 
     @Override
     public String askQuestions(String turnCode, List<QuestionDto> questions) {
@@ -47,11 +48,13 @@ public class DefaultCoordinationApi implements CoordinationApi {
         }
 
         Questions saved = questionsDomainService.createQuestions(taskCode, turnCode, domainQuestions);
+        Task task = taskDomainService.requireTask(taskCode);
 
         // 通知用户 Agent 正在请求回答问题
-        messageCenter.send(questionsRaisedConfigCode,
-                "Agent 请求提问: " + taskCode,
-                "Task " + taskCode + " 正等待您的回复。");
+        messageCenter.send(NotificationEvent.QUESTIONS_RAISED, Map.of(
+                "taskTitle", readableTaskTitle(task),
+                "turnNo", String.valueOf(taskTurn.getTurnNo()),
+                "questionCount", String.valueOf(domainQuestions.size())));
 
         return saved.getCode();
     }
@@ -80,5 +83,13 @@ public class DefaultCoordinationApi implements CoordinationApi {
     @Override
     public boolean hasPendingQuestions(String turnCode) {
         return questionsDomainService.hasPendingQuestions(turnCode);
+    }
+
+    private String readableTaskTitle(Task task) {
+        String title = task.getTitle();
+        if (title == null || title.isBlank()) {
+            return "未命名任务";
+        }
+        return title;
     }
 }

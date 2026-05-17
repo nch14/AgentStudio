@@ -1,8 +1,10 @@
 package com.chenhaonee.agents.domain.notify.repository;
 
 import com.chenhaonee.agents.domain.notify.model.NotifyConfig;
+import com.chenhaonee.agents.domain.notify.model.NotificationEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -11,4 +13,8 @@ import java.util.Optional;
 public interface NotifyConfigRepository extends JpaRepository<NotifyConfig, Long> {
 
     Optional<NotifyConfig> findByCode(String code);
+
+    Optional<NotifyConfig> findByEventAndValidTrue(NotificationEvent event);
+
+    List<NotifyConfig> findByEventIsNotNullAndValidTrueOrderByUpdateTimeDesc();
 }
