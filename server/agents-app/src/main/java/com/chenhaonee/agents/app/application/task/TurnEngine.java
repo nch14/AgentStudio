@@ -1,11 +1,22 @@
 package com.chenhaonee.agents.app.application.task;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.chenhaonee.agents.connect.driver.AgentRegistry;
 import com.chenhaonee.agents.connect.spi.core.TaskAgent;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnRequest;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnResult;
 import com.chenhaonee.agents.domain.agent.model.Agent;
 import com.chenhaonee.agents.domain.agent.service.AgentDomainService;
+import com.chenhaonee.agents.domain.session.factory.AgentSessionDomainFactory;
+import com.chenhaonee.agents.domain.session.model.AgentSession;
+import com.chenhaonee.agents.domain.session.model.ContentBlockType;
+import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
+import com.chenhaonee.agents.domain.session.model.MessageRole;
+import com.chenhaonee.agents.domain.session.model.SessionScene;
+import com.chenhaonee.agents.domain.session.repository.AgentMessageRepository;
+import com.chenhaonee.agents.domain.session.repository.AgentSessionRepository;
+import com.chenhaonee.agents.domain.session.service.AgentSessionDomainService;
 import com.chenhaonee.agents.domain.task.model.Task;
 import com.chenhaonee.agents.domain.task.model.TaskTurn;
 import com.chenhaonee.agents.domain.task.model.TurnRunStatus;
@@ -33,6 +44,10 @@ public class TurnEngine {
     private final TaskTurnDomainService taskTurnDomainService;
     private final TaskDomainService taskDomainService;
     private final TaskNotificationService taskNotificationService;
+    private final AgentSessionRepository agentSessionRepository;
+    private final AgentSessionDomainFactory agentSessionDomainFactory;
+    private final AgentSessionDomainService agentSessionDomainService;
+    private final AgentMessageRepository agentMessageRepository;
 
     /** agentCode → 互斥锁，保证同一 agent 下 task turn 串行执行 */
     private final ConcurrentHashMap<String, ReentrantLock> agentLocks = new ConcurrentHashMap<>();
@@ -67,9 +82,10 @@ public class TurnEngine {
 
     private void executeRun(Agent agent, Task task, TaskTurn turn) {
         try {
+            ensureTaskTurnSession(task, turn);
             TaskAgent taskAgent = agentRegistry.findTaskAgent(agent.getProvider())
                     .orElseThrow(() -> new IllegalStateException("Task agent not found for provider: " + agent.getProvider()));
-            TaskTurnRequest request = new TaskTurnRequest(task.getCode(), turn.getCode());
+            TaskTurnRequest request = new TaskTurnRequest(task.getCode(), turn.getCode(), task.getSessionCode());
             TaskTurnResult result = taskAgent.runTurn(agent.getCode(), request);
             processResult(turn, task, result);
         } catch (Exception e) {
@@ -104,9 +120,44 @@ public class TurnEngine {
         }
 
         if (turn.getRunStatus() == TurnRunStatus.SUSPENDED) {
-            taskNotificationService.notifyTaskWaiting(task);
+            taskNotificationService.notifyTaskWaiting(task, turn);
         } else if (turn.getRunStatus() == TurnRunStatus.HANGING) {
             taskNotificationService.notifyTaskHanging(task, turn);
         }
+    }
+
+    private void ensureTaskTurnSession(Task task, TaskTurn turn) {
+        final String sessionCode;
+        if (task.getSessionCode() == null || task.getSessionCode().isBlank()) {
+            AgentSession session = agentSessionDomainFactory.create(task.getTitle(), task.getAgentCode(), SessionScene.TASK);
+            session = agentSessionRepository.save(session);
+            task.setSessionCode(session.getCode());
+            taskDomainService.save(task);
+            sessionCode = session.getCode();
+        } else {
+            sessionCode = task.getSessionCode();
+            agentSessionRepository.findByCode(sessionCode)
+                    .orElseThrow(() -> new IllegalStateException("task session not found: " + sessionCode));
+        }
+
+        if (agentMessageRepository.existsByTurnCode(turn.getCode())) {
+            return;
+        }
+        agentSessionDomainService.appendBlock(
+                sessionCode,
+                turn.getCode(),
+                MessageRole.USER,
+                ContentBlockType.TEXT,
+                MessageProtocolType.ANTHROPIC_MESSAGES,
+                buildTaskPayload(task.getContent()),
+                null
+        );
+    }
+
+    private String buildTaskPayload(String taskContent) {
+        JSONObject payload = new JSONObject();
+        payload.put("text", taskContent);
+        payload.put("source", "task");
+        return JSON.toJSONString(payload);
     }
 }

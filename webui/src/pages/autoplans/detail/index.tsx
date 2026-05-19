@@ -444,7 +444,8 @@ export default function AutoPlanDetailPage() {
         width={560}
         destroyOnClose
         styles={{
-          content: { borderRadius: 24, padding: 32 },
+          root: { borderRadius: 24 },
+          body: { padding: 32 },
           header: { marginBottom: 24 },
         }}
         okButtonProps={{ style: { borderRadius: 8 } }}

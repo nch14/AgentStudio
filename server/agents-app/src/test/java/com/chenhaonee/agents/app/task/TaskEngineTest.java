@@ -85,7 +85,7 @@ class TaskEngineTest {
         taskEngine.processPattern(task);
 
         verify(taskDomainService).complete(task.getCode(), "任务完成摘要");
-        verify(taskNotificationService).notifyTaskSucceeded(completedTask, "任务完成摘要");
+        verify(taskNotificationService).notifyTaskSucceeded(completedTask, latestTurn, "任务完成摘要");
     }
 
     private Task activeTask() {

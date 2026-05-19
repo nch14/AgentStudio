@@ -2,6 +2,7 @@ package com.chenhaonee.agents.app.interfaces.http;
 
 import com.chenhaonee.agents.app.interfaces.http.common.Response;
 import com.chenhaonee.agents.domain.notify.model.Notification;
+import com.chenhaonee.agents.domain.notify.model.NotificationEvent;
 import com.chenhaonee.agents.domain.notify.service.MessageCenter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -18,6 +19,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * 消息中心接口。
@@ -74,18 +77,20 @@ public class NotificationController {
     @PostMapping("/send")
     public Response<Void> send(@RequestBody SendRequest request) {
         try {
-            log.info("Trigger test notification, configCode={}, subject={}", request.configCode(), request.subject());
-            messageCenter.send(request.configCode(), request.subject(), request.content());
+            NotificationEvent event = NotificationEvent.fromCode(request.eventCode());
+            Map<String, String> variables = Optional.ofNullable(request.variables()).orElseGet(Map::of);
+            log.info("Trigger test notification, eventCode={}, variables={}", request.eventCode(), variables.keySet());
+            messageCenter.send(event, variables);
             return Response.successWithMessage("通知发送已触发，请查看日志和消息列表");
         } catch (Exception e) {
-            log.error("Failed to send notification, configCode={}", request.configCode(), e);
+            log.error("Failed to send notification, eventCode={}", request.eventCode(), e);
             return Response.error(500, e.getMessage());
         }
     }
 
     public record NotificationDto(
             String code,
-            String configCode,
+            String eventCode,
             String channel,
             String recipient,
             String subject,
@@ -99,7 +104,7 @@ public class NotificationController {
         static NotificationDto from(Notification n) {
             return new NotificationDto(
                     n.getCode(),
-                    n.getConfigCode(),
+                    n.getEventCode(),
                     n.getChannel().name(),
                     n.getRecipient(),
                     n.getSubject(),
@@ -113,11 +118,9 @@ public class NotificationController {
     }
 
     public record SendRequest(
-            @Schema(description = "通知配置编码", example = "questions_raised")
-            String configCode,
-            @Schema(description = "主题")
-            String subject,
-            @Schema(description = "内容")
-            String content) {
+            @Schema(description = "通知事件编码", example = "questions_raised")
+            String eventCode,
+            @Schema(description = "通知模板变量，例如 taskTitle、turnNo、questionCount、reason、resultSummary")
+            Map<String, String> variables) {
     }
 }

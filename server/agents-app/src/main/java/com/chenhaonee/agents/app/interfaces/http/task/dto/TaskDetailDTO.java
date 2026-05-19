@@ -10,6 +10,7 @@ public record TaskDetailDTO(
         @Schema(description = "标题") String title,
         @Schema(description = "任务内容") String content,
         @Schema(description = "Agent 编码") String agentCode,
+        @Schema(description = "关联会话编码") String sessionCode,
         @Schema(description = "创建来源") String source,
         @Schema(description = "来源实体编码，USER_CREATE 为 ownerCode，SCHEDULED_CREATE 为 planCode") String sourceRef,
         @Schema(description = "任务状态") String status,

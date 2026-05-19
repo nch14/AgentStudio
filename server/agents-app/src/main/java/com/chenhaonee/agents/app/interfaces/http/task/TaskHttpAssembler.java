@@ -16,6 +16,7 @@ public class TaskHttpAssembler {
                 view.task().getTitle(),
                 view.task().getContent(),
                 view.task().getAgentCode(),
+                view.task().getSessionCode(),
                 view.task().getSource().name(),
                 view.task().getSourceRef(),
                 view.task().getStatus().name(),

@@ -24,7 +24,11 @@ import java.util.Date;
 @EqualsAndHashCode(callSuper = true)
 public class Notification extends BaseEntity {
 
-    /** 关联的通知类型配置编码 */
+    /** 关联的通知事件编码 */
+    @Column(length = 64)
+    private String eventCode;
+
+    /** 关联的通知类型配置编码（保留用于兼容） */
     @Column(length = 64)
     private String configCode;
 

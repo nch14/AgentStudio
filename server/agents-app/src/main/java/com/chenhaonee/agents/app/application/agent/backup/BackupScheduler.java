@@ -20,10 +20,10 @@ public class BackupScheduler {
         this.backupService = backupService;
     }
 
-    @Value("${agents.scheduler.backup.enabled:true}")
+    @Value("${agents.scheduler.backup.enabled:false}")
     private boolean enabled;
 
-    @Scheduled(cron = "${agents.scheduler.backup.cron}")
+    @Scheduled(cron = "${agents.scheduler.backup.cron:0 0 * * * *}")
     public void runBackup() {
         if (!enabled) {
             return;

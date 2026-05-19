@@ -2,24 +2,27 @@ import { useState, useEffect, useCallback } from 'react';
 import dayjs from 'dayjs';
 import {
   Button, Badge, message, Typography, Space, Spin, Tag, Card, Tabs, Progress, Timeline,
-  List, Empty, Input, Tooltip, Popconfirm, Radio
+  List, Empty, Input, Tooltip, Popconfirm, Radio, Divider
 } from 'antd';
 import {
-  ArrowLeftOutlined, PlayCircleOutlined, StopOutlined, 
-  CommentOutlined, HistoryOutlined, 
+  ArrowLeftOutlined, PlayCircleOutlined, StopOutlined,
+  CommentOutlined, HistoryOutlined,
   ReloadOutlined, InfoCircleOutlined, FolderOpenOutlined,
-  SyncOutlined, ClockCircleOutlined, QuestionCircleOutlined
+  SyncOutlined, ClockCircleOutlined, QuestionCircleOutlined,
+  MessageOutlined
 } from '@ant-design/icons';
 import { useParams, history } from '@umijs/max';
 import { getTaskDetail, cancelTask, retryTask, rollbackTask } from '@/services/task/TaskController';
 import { listTaskTurns, resumeTurn } from '@/services/task/TaskTurnController';
 import { listQuestions, listInstructions, resolveQuestions } from '@/services/task/CoordinationController';
 import { getAgentDetail } from '@/services/agent/AgentController';
+import { listMessagesByCursor } from '@/services/conversation/ConversationController';
 import AgentFileWorkspace from '@/components/AgentFileWorkspace';
-import type { 
-  TaskDetailResponse, TaskTurnListItemResponse, 
-  QuestionsResponse, InstructionResponse 
+import type {
+  TaskDetailResponse, TaskTurnListItemResponse,
+  QuestionsResponse, InstructionResponse
 } from '@/services/task/typings';
+import type { AgentSessionTurnDTO, AgentSessionBlockDTO } from '@/services/conversation/typings';
 import './style.less';
 
 const { Text, Title, Paragraph } = Typography;
@@ -72,6 +75,10 @@ export default function TaskDetailPage() {
   const [instructions, setInstructions] = useState<InstructionResponse[]>([]);
   const [coordinationLoading, setCoordinationLoading] = useState(false);
 
+  // Process Data
+  const [processTurns, setProcessTurns] = useState<AgentSessionTurnDTO[]>([]);
+  const [processLoading, setProcessLoading] = useState(false);
+
   const fetchTask = useCallback(async () => {
     if (!code) return;
     setLoading(true);
@@ -114,6 +121,17 @@ export default function TaskDetailPage() {
     }
   }, [code]);
 
+  const fetchProcess = useCallback(async () => {
+    if (!code || !task?.sessionCode || !task?.agentCode) return;
+    setProcessLoading(true);
+    try {
+      const res = await listMessagesByCursor(task.agentCode, task.sessionCode, { cursor: 0, size: 100 });
+      setProcessTurns(res.data || []);
+    } finally {
+      setProcessLoading(false);
+    }
+  }, [code, task?.sessionCode, task?.agentCode]);
+
   useEffect(() => {
     fetchTask();
   }, [fetchTask]);
@@ -121,13 +139,15 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (activeTab === 'execution') fetchTurns();
     if (activeTab === 'coordination') fetchCoordination();
-  }, [activeTab, fetchTurns, fetchCoordination]);
+    if (activeTab === 'process') fetchProcess();
+  }, [activeTab, fetchTurns, fetchCoordination, fetchProcess]);
 
   const handleRefresh = useCallback(() => {
     fetchTask();
     if (activeTab === 'execution') fetchTurns();
     if (activeTab === 'coordination') fetchCoordination();
-  }, [activeTab, fetchTask, fetchTurns, fetchCoordination]);
+    if (activeTab === 'process') fetchProcess();
+  }, [activeTab, fetchTask, fetchTurns, fetchCoordination, fetchProcess]);
 
   const handleCancel = async () => {
     if (!code) return;
@@ -211,6 +231,76 @@ export default function TaskDetailPage() {
         }))}
       />
       {turns.length === 0 && !turnsLoading && <Empty description="暂无回合记录" />}
+    </div>
+  );
+
+  const renderProcess = () => (
+    <div className="tab-pane process-pane">
+      <div className="pane-header">
+        <Title level={5}>执行过程</Title>
+        <Button size="small" icon={<ReloadOutlined />} onClick={fetchProcess} loading={processLoading}>刷新</Button>
+      </div>
+      {!task?.sessionCode ? (
+        <Empty description="任务尚未关联对话会话" />
+      ) : (
+        <List
+          loading={processLoading}
+          dataSource={processTurns}
+          locale={{ emptyText: '暂无过程消息' }}
+          renderItem={(turn) => (
+            <Card size="small" className="process-turn-card" bordered={false} style={{ marginBottom: 12 }}>
+              <div className="process-turn-header">
+                <Tag color="blue" bordered={false}>Turn</Tag>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {turn.turnCode?.substring(0, 12) || '-'}
+                </Text>
+              </div>
+              <div className="process-turn-body">
+                {turn.blocks?.map((block: AgentSessionBlockDTO) => (
+                  <div key={block.code} className={`process-block process-block-${block.type.toLowerCase()}`}>
+                    {block.role === 'USER' && (
+                      <div className="process-block-user">
+                        <Tag color="geekblue">用户</Tag>
+                        <Text>{(block.payload as any)?.text || '-'}</Text>
+                      </div>
+                    )}
+                    {block.type === 'TEXT' && block.role === 'ASSISTANT' && (
+                      <div className="process-block-text">
+                        <Paragraph>{(block.payload as any)?.text || ''}</Paragraph>
+                      </div>
+                    )}
+                    {block.type === 'THINKING' && (
+                      <details className="process-block-thinking">
+                        <summary>思考过程</summary>
+                        <pre className="thinking-content">{(block.payload as any)?.thinking || ''}</pre>
+                      </details>
+                    )}
+                    {block.type === 'TOOL_USE' && (
+                      <div className="process-block-tool">
+                        <Tag color="orange">工具调用</Tag>
+                        <Text strong>{(block.payload as any)?.name || '-'}</Text>
+                        <pre className="tool-input-content">
+                          {JSON.stringify((block.payload as any)?.input, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {block.type === 'TOOL_RESULT' && (
+                      <div className="process-block-tool-result">
+                        <Tag color={block.payload && (block.payload as any).isError ? 'red' : 'green'}>工具结果</Tag>
+                        <pre className="tool-result-content">
+                          {typeof (block.payload as any)?.content === 'string'
+                            ? (block.payload as any).content
+                            : JSON.stringify((block.payload as any)?.content, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        />
+      )}
     </div>
   );
 
@@ -400,6 +490,7 @@ export default function TaskDetailPage() {
             items={[
               { key: 'info', label: (<span><InfoCircleOutlined /> 基本信息</span>), children: renderInfo() },
               { key: 'execution', label: (<span><HistoryOutlined /> 执行历史</span>), children: renderExecution() },
+              { key: 'process', label: (<span><MessageOutlined /> 过程消息</span>), children: renderProcess() },
               { key: 'coordination', label: (<span><CommentOutlined /> 协同中心</span>), children: renderCoordination() },
               { key: 'workspace', label: (<span><FolderOpenOutlined /> 工作空间</span>), children: renderWorkspace() },
             ]}

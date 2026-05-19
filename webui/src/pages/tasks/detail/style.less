@@ -157,6 +157,90 @@
     }
   }
 
+  // Process Pane
+  .process-pane {
+    max-width: 900px;
+    margin: 0 auto;
+
+    .process-turn-card {
+      background: #fafafa;
+      border: 1px solid #f0f0f0;
+      border-radius: 12px;
+
+      .process-turn-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .process-block {
+        margin-bottom: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+
+        &-user {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 8px 0;
+        }
+
+        &-text {
+          padding: 4px 0;
+        }
+
+        &-thinking {
+          details {
+            cursor: pointer;
+            summary {
+              font-size: 13px;
+              color: #8c8c8c;
+              outline: none;
+            }
+            .thinking-content {
+              margin-top: 8px;
+              padding: 12px;
+              background: #f5f5f5;
+              border-radius: 8px;
+              font-size: 13px;
+              white-space: pre-wrap;
+              word-break: break-word;
+              color: #595959;
+            }
+          }
+        }
+
+        &-tool {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          .tool-input-content {
+            margin-top: 4px;
+            padding: 10px;
+            background: #fffbe6;
+            border-radius: 8px;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+        }
+
+        &-tool-result {
+          .tool-result-content {
+            margin-top: 4px;
+            padding: 10px;
+            background: #f6ffed;
+            border-radius: 8px;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+        }
+      }
+    }
+  }
+
   .workspace-pane {
     height: 600px;
   }

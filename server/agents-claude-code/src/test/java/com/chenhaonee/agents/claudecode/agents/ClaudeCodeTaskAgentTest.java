@@ -13,7 +13,9 @@ import com.chenhaonee.agents.connect.capability.TurnEndReportRegistry;
 import com.chenhaonee.agents.connect.spi.model.task.TaskNextAction;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnRequest;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnResult;
+import com.chenhaonee.agents.connect.support.MessagesEventBlockRecorderFactory;
 import com.chenhaonee.agents.domain.agent.model.AgentProvider;
+import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
 import com.chenhaonee.agents.domain.session.model.SessionRelationTargetType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +60,12 @@ class ClaudeCodeTaskAgentTest {
     @Mock
     private TurnEndReportRegistry turnEndReportRegistry;
 
+    @Mock
+    private MessagesEventBlockRecorderFactory messagesEventBlockRecorderFactory;
+
+    @Mock
+    private MessagesEventBlockRecorderFactory.MessagesEventBlockRecorder messagesEventBlockRecorder;
+
     @Test
     void shouldTerminateWithReportedProgressWhenReportTurnEndCalled() throws Exception {
         Path argsFile = tempDir.resolve("args-first.txt");
@@ -69,21 +77,21 @@ class ClaudeCodeTaskAgentTest {
         when(claudeCodePrompts.renderTaskSystemPrompt("task-1")).thenReturn("system");
         when(claudeCodePrompts.renderTurnUserPrompt("task-1", "turn-1", null)).thenReturn("user");
         when(sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE))
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE))
                 .thenReturn(null);
         when(coordinationApi.hasPendingQuestions("turn-1")).thenReturn(false);
         when(turnEndReportRegistry.consume("turn-1"))
                 .thenReturn(new TurnEndReport(60, "任务完成", null));
 
-        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1"));
+        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1", "session-1"));
 
         assertEquals(TaskNextAction.TERMINATED, result.outcome());
         assertEquals(60, result.progress());
         assertEquals("任务完成", result.resultSummary());
         verify(sessionApi).bind(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE, "cc-session-1");
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE, "cc-session-1");
         verify(sessionApi, never()).rebind(
-                eq(SessionRelationTargetType.TASK_TURN), eq("turn-1"), eq(AgentProvider.CLAUDE_CODE), eq("cc-session-1"));
+                eq(SessionRelationTargetType.TASK), eq("task-1"), eq(AgentProvider.CLAUDE_CODE), eq("cc-session-1"));
     }
 
     @Test
@@ -97,17 +105,17 @@ class ClaudeCodeTaskAgentTest {
         when(claudeCodePrompts.renderTaskSystemPrompt("task-1")).thenReturn("system");
         when(claudeCodePrompts.renderTurnUserPrompt("task-1", "turn-1", "old-session")).thenReturn("user");
         when(sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE))
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE))
                 .thenReturn("old-session", "old-session");
         when(coordinationApi.hasPendingQuestions("turn-1")).thenReturn(false);
         when(turnEndReportRegistry.consume("turn-1"))
                 .thenReturn(new TurnEndReport(80, "恢复后完成", null));
 
-        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1"));
+        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1", "session-1"));
 
         assertEquals(TaskNextAction.TERMINATED, result.outcome());
         verify(sessionApi).rebind(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE, "cc-session-2");
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE, "cc-session-2");
         String args = Files.readString(argsFile);
         assertTrue(args.contains("--resume"));
         assertTrue(args.contains("old-session"));
@@ -124,13 +132,13 @@ class ClaudeCodeTaskAgentTest {
         when(claudeCodePrompts.renderTaskSystemPrompt("task-1")).thenReturn("system");
         when(claudeCodePrompts.renderTurnUserPrompt(eq("task-1"), eq("turn-1"), any())).thenReturn("user");
         when(sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE))
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE))
                 .thenReturn(null);
         when(coordinationApi.hasPendingQuestions("turn-1")).thenReturn(false);
         // consume never returns a report
         when(turnEndReportRegistry.consume("turn-1")).thenReturn(null);
 
-        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1"));
+        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1", "session-1"));
 
         assertEquals(TaskNextAction.HANGING, result.outcome());
         assertTrue(result.resultSummary().contains("未上报"));
@@ -147,11 +155,11 @@ class ClaudeCodeTaskAgentTest {
         when(claudeCodePrompts.renderTaskSystemPrompt("task-1")).thenReturn("system");
         when(claudeCodePrompts.renderTurnUserPrompt("task-1", "turn-1", null)).thenReturn("user");
         when(sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, "turn-1", AgentProvider.CLAUDE_CODE))
+                SessionRelationTargetType.TASK, "task-1", AgentProvider.CLAUDE_CODE))
                 .thenReturn(null);
         when(coordinationApi.hasPendingQuestions("turn-1")).thenReturn(true);
 
-        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1"));
+        TaskTurnResult result = agent.runTurn("agent-1", new TaskTurnRequest("task-1", "turn-1", "session-1"));
 
         assertEquals(TaskNextAction.WAIT_COORDINATION, result.outcome());
     }
@@ -162,6 +170,9 @@ class ClaudeCodeTaskAgentTest {
         properties.setTaskTimeoutSeconds(5);
         ClaudeCodeProcessBuilder processBuilder = new ClaudeCodeProcessBuilder(properties);
         ClaudeCodeProcessManager processManager = new ClaudeCodeProcessManager(properties);
+        when(messagesEventBlockRecorderFactory.create(
+                eq("session-1"), eq("turn-1"), eq(MessageProtocolType.ANTHROPIC_MESSAGES)))
+                .thenReturn(messagesEventBlockRecorder);
         return new ClaudeCodeTaskAgent(
                 properties,
                 agentConfigApi,
@@ -171,7 +182,8 @@ class ClaudeCodeTaskAgentTest {
                 claudeCodePrompts,
                 sessionApi,
                 coordinationApi,
-                turnEndReportRegistry
+                turnEndReportRegistry,
+                messagesEventBlockRecorderFactory
         );
     }
 

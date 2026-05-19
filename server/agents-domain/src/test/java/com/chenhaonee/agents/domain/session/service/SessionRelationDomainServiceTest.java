@@ -32,27 +32,27 @@ class SessionRelationDomainServiceTest {
     @Test
     void shouldRebindExactTargetTypeAndProviderType() {
         SessionRelation existing = new SessionRelation(
-                SessionRelationTargetType.TASK_TURN,
+                SessionRelationTargetType.TASK,
                 "same-code",
                 AgentProvider.CLAUDE_CODE,
                 "provider-old"
         );
         SessionRelation rebound = new SessionRelation(
-                SessionRelationTargetType.TASK_TURN,
+                SessionRelationTargetType.TASK,
                 "same-code",
                 AgentProvider.CLAUDE_CODE,
                 "provider-new"
         );
         when(sessionRelationRepository.findByTargetTypeAndTargetCodeAndProviderType(
-                SessionRelationTargetType.TASK_TURN, "same-code", AgentProvider.CLAUDE_CODE
+                SessionRelationTargetType.TASK, "same-code", AgentProvider.CLAUDE_CODE
         )).thenReturn(Optional.of(existing));
         when(sessionRelationDomainFactory.create(
-                SessionRelationTargetType.TASK_TURN, "same-code", AgentProvider.CLAUDE_CODE, "provider-new"
+                SessionRelationTargetType.TASK, "same-code", AgentProvider.CLAUDE_CODE, "provider-new"
         )).thenReturn(rebound);
         when(sessionRelationRepository.save(rebound)).thenReturn(rebound);
 
         SessionRelation result = sessionRelationDomainService.rebind(
-                SessionRelationTargetType.TASK_TURN,
+                SessionRelationTargetType.TASK,
                 "same-code",
                 AgentProvider.CLAUDE_CODE,
                 "provider-new"
@@ -60,11 +60,11 @@ class SessionRelationDomainServiceTest {
 
         assertSame(rebound, result);
         verify(sessionRelationRepository).findByTargetTypeAndTargetCodeAndProviderType(
-                SessionRelationTargetType.TASK_TURN, "same-code", AgentProvider.CLAUDE_CODE
+                SessionRelationTargetType.TASK, "same-code", AgentProvider.CLAUDE_CODE
         );
         verify(sessionRelationRepository).delete(existing);
         verify(sessionRelationDomainFactory).create(
-                SessionRelationTargetType.TASK_TURN, "same-code", AgentProvider.CLAUDE_CODE, "provider-new"
+                SessionRelationTargetType.TASK, "same-code", AgentProvider.CLAUDE_CODE, "provider-new"
         );
         verify(sessionRelationRepository).save(rebound);
     }
@@ -92,7 +92,7 @@ class SessionRelationDomainServiceTest {
                 SessionRelationTargetType.AGENT_SESSION, "same-code", AgentProvider.CLAUDE_CODE
         );
         verify(sessionRelationRepository, never()).findByTargetTypeAndTargetCodeAndProviderType(
-                SessionRelationTargetType.TASK_TURN, "same-code", AgentProvider.CLAUDE_CODE
+                SessionRelationTargetType.TASK, "same-code", AgentProvider.CLAUDE_CODE
         );
     }
 }

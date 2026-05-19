@@ -47,6 +47,11 @@ public class TaskDomainService {
     }
 
     @Transactional(rollbackFor = Exception.class)
+    public Task save(Task task) {
+        return taskRepository.save(task);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
     public Task complete(String taskCode, String resultSummary) {
         Task task = requireTask(taskCode);
         task.succeed(resultSummary);

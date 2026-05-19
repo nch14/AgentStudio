@@ -54,7 +54,7 @@ public class TaskEngine {
         if (isTurnEnded(latestTurn)) {
             if (task.getProgress() == 100) {
                 Task completedTask = taskDomainService.complete(task.getCode(), latestTurn.getFinalSummary());
-                taskNotificationService.notifyTaskSucceeded(completedTask, latestTurn.getFinalSummary());
+                taskNotificationService.notifyTaskSucceeded(completedTask, latestTurn, latestTurn.getFinalSummary());
             } else {
                 startNextTurn(task);
             }

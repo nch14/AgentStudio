@@ -8,17 +8,22 @@ import java.util.Objects;
  */
 public record TaskTurnRequest(
         String taskCode,
-        String turnCode
+        String turnCode,
+        String sessionCode
 ) {
 
     public TaskTurnRequest {
         Objects.requireNonNull(taskCode, "taskCode cannot be null");
         Objects.requireNonNull(turnCode, "turnCode cannot be null");
+        Objects.requireNonNull(sessionCode, "sessionCode cannot be null");
         if (taskCode.isBlank()) {
             throw new IllegalArgumentException("taskCode cannot be blank");
         }
         if (turnCode.isBlank()) {
             throw new IllegalArgumentException("turnCode cannot be blank");
+        }
+        if (sessionCode.isBlank()) {
+            throw new IllegalArgumentException("sessionCode cannot be blank");
         }
     }
 }

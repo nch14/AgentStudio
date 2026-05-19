@@ -7,6 +7,7 @@ import com.chenhaonee.agents.claudecode.process.ClaudeCodeProcessManager;
 import com.chenhaonee.agents.claudecode.prompt.ClaudeCodePrompts;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonEvent;
 import com.chenhaonee.agents.claudecode.stream.StreamJsonParser;
+import com.chenhaonee.agents.claudecode.stream.StreamJsonToMessagesEventMapper;
 import com.chenhaonee.agents.claudecode.task.TaskExecutionObservation;
 import com.chenhaonee.agents.claudecode.workspace.WorkspaceManager;
 import com.chenhaonee.agents.connect.capability.AgentConfigApi;
@@ -18,7 +19,9 @@ import com.chenhaonee.agents.connect.spi.core.TaskAgent;
 import com.chenhaonee.agents.connect.spi.model.task.TaskPrepareResult;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnRequest;
 import com.chenhaonee.agents.connect.spi.model.task.TaskTurnResult;
+import com.chenhaonee.agents.connect.support.MessagesEventBlockRecorderFactory;
 import com.chenhaonee.agents.domain.agent.model.AgentProvider;
+import com.chenhaonee.agents.domain.session.model.MessageProtocolType;
 import com.chenhaonee.agents.domain.session.model.SessionRelationTargetType;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 基于 Claude Code CLI 的 TaskAgent 实现。
@@ -63,8 +67,10 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
     private final SessionApi sessionApi;
     private final CoordinationApi coordinationApi;
     private final TurnEndReportRegistry turnEndReportRegistry;
+    private final MessagesEventBlockRecorderFactory messagesEventBlockRecorderFactory;
 
     private final StreamJsonParser streamJsonParser = new StreamJsonParser();
+    private final StreamJsonToMessagesEventMapper messagesEventMapper = new StreamJsonToMessagesEventMapper();
 
     @Override
     public AgentProvider supportedType() {
@@ -91,7 +97,7 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
         Map<String, String> providerConfig = agentConfigApi.getProviderConfig(agentCode);
 
         String previousSessionId = sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, request.turnCode(), AgentProvider.CLAUDE_CODE);
+                SessionRelationTargetType.TASK, request.taskCode(), AgentProvider.CLAUDE_CODE);
         boolean isResume = previousSessionId != null && !previousSessionId.isBlank();
         String model = providerConfig.getOrDefault("model", properties.getDefaultModel());
         int maxTurns = Integer.parseInt(providerConfig.getOrDefault("maxTurns",
@@ -118,6 +124,11 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
                 TaskExecutionObservation observation = new TaskExecutionObservation();
                 ClaudeCodeProcess process = null;
                 boolean registered = false;
+                MessagesEventBlockRecorderFactory.MessagesEventBlockRecorder recorder =
+                        messagesEventBlockRecorderFactory.create(
+                                request.sessionCode(),
+                                request.turnCode(),
+                                MessageProtocolType.ANTHROPIC_MESSAGES);
 
                 try {
                     List<String> command = processBuilder.buildTaskProcess(
@@ -128,14 +139,15 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
                     processManager.registerTask(processId, process);
                     registered = true;
 
-                    process.streamLines()
-                            .doOnNext(line -> {
-                                observation.recordLine(line);
-                                StreamJsonEvent event = streamJsonParser.parseLine(line);
-                                observation.recordEvent(event);
-                            })
-                            .toStream()
-                            .toList();
+                    messagesEventMapper.project(
+                                    process.streamLines()
+                                            .doOnNext(observation::recordLine)
+                                            .map(streamJsonParser::parseLine)
+                                            .filter(Objects::nonNull)
+                                            .doOnNext(observation::recordEvent)
+                            )
+                            .doOnNext(recorder::onEvent)
+                            .blockLast();
 
                     boolean completed = process.waitFor(properties.getTaskTimeoutSeconds());
                     int exitCode = process.exitCode();
@@ -147,7 +159,7 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
                     }
 
                     String newSessionId = observation.capturedSessionId();
-                    syncProviderSession(request.turnCode(), newSessionId);
+                    syncProviderSession(request.taskCode(), newSessionId);
                     if (newSessionId != null && !newSessionId.isBlank()) {
                         currentSessionId = newSessionId;
                         currentIsResume = true;
@@ -208,19 +220,19 @@ public class ClaudeCodeTaskAgent implements TaskAgent {
         }
     }
 
-    private void syncProviderSession(String turnCode, String providerSessionId) {
+    private void syncProviderSession(String taskCode, String providerSessionId) {
         if (providerSessionId == null || providerSessionId.isBlank()) {
             return;
         }
         String currentProviderSessionId = sessionApi.getProviderSessionId(
-                SessionRelationTargetType.TASK_TURN, turnCode, AgentProvider.CLAUDE_CODE);
+                SessionRelationTargetType.TASK, taskCode, AgentProvider.CLAUDE_CODE);
         if (currentProviderSessionId == null || currentProviderSessionId.isBlank()) {
-            sessionApi.bind(SessionRelationTargetType.TASK_TURN, turnCode,
+            sessionApi.bind(SessionRelationTargetType.TASK, taskCode,
                     AgentProvider.CLAUDE_CODE, providerSessionId);
             return;
         }
         if (!currentProviderSessionId.equals(providerSessionId)) {
-            sessionApi.rebind(SessionRelationTargetType.TASK_TURN, turnCode,
+            sessionApi.rebind(SessionRelationTargetType.TASK, taskCode,
                     AgentProvider.CLAUDE_CODE, providerSessionId);
         }
     }

@@ -244,9 +244,10 @@ export default function TasksPage() {
         onCancel={() => setCreateModalOpen(false)}
         width={500}
         destroyOnClose
-        styles={{ 
-          content: { borderRadius: 24, padding: 32 }, 
-          header: { marginBottom: 24 } 
+        styles={{
+          root: { borderRadius: 24 },
+          body: { padding: 32 },
+          header: { marginBottom: 24 }
         }}
         okButtonProps={{ style: { borderRadius: 8 } }}
         cancelButtonProps={{ style: { borderRadius: 8 } }}

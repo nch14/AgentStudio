@@ -5,6 +5,7 @@ export interface TaskDetailResponse {
   title: string;
   content: string;
   agentCode: string;
+  sessionCode?: string;
   source: string;
   status: string;
   currentTurnCode?: string;
